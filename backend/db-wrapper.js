@@ -11,6 +11,42 @@ let engine = null;  // 'sqlite' or 'postgres'
 let sqliteDb = null;
 let pgPool = null;
 
+// SQLite queries in this project use "?" placeholders.
+// PostgreSQL requires "$1, $2, ..." placeholders.
+function toPostgresParamsSql(sql) {
+  if (typeof sql !== 'string' || sql.indexOf('?') === -1) return sql;
+
+  let index = 0;
+  let inSingleQuote = false;
+  let converted = '';
+
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+
+    if (ch === "'") {
+      // Handle escaped single quote in SQL literal: ''
+      if (inSingleQuote && sql[i + 1] === "'") {
+        converted += "''";
+        i++;
+        continue;
+      }
+      inSingleQuote = !inSingleQuote;
+      converted += ch;
+      continue;
+    }
+
+    if (!inSingleQuote && ch === '?') {
+      index += 1;
+      converted += `$${index}`;
+      continue;
+    }
+
+    converted += ch;
+  }
+
+  return converted;
+}
+
 // Initialize database based on environment
 async function initDb() {
   const dbUrl = process.env.DATABASE_URL;
@@ -207,7 +243,8 @@ const db = {
         callback(err, { lastID: this.lastID, changes: this.changes });
       });
     } else {
-      pgPool.query(sql, params, (err, res) => {
+      const pgSql = toPostgresParamsSql(sql);
+      pgPool.query(pgSql, params, (err, res) => {
         callback(err, { lastID: null, changes: res?.rowCount || 0, rows: res?.rows || [] });
       });
     }
@@ -228,7 +265,8 @@ const db = {
     if (engine === 'sqlite') {
       sqliteDb.get(sql, params, callback);
     } else {
-      pgPool.query(sql, params, (err, res) => {
+      const pgSql = toPostgresParamsSql(sql);
+      pgPool.query(pgSql, params, (err, res) => {
         callback(err, res?.rows?.[0]);
       });
     }
@@ -249,7 +287,8 @@ const db = {
     if (engine === 'sqlite') {
       sqliteDb.all(sql, params, callback);
     } else {
-      pgPool.query(sql, params, (err, res) => {
+      const pgSql = toPostgresParamsSql(sql);
+      pgPool.query(pgSql, params, (err, res) => {
         callback(err, res?.rows || []);
       });
     }
