@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import apiClient from '../api/client.js';
 import './AdminClasses.css';
 import './AdminMobileOptimizations.css';
@@ -14,7 +14,11 @@ function AdminClasses() {
   const [showClassDetails, setShowClassDetails] = useState(false);
   const [classStudents, setClassStudents] = useState([]);
   const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [selectedStudentLabel, setSelectedStudentLabel] = useState('');
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  const [isStudentPickerOpen, setIsStudentPickerOpen] = useState(false);
   const [newTeacherId, setNewTeacherId] = useState('');
+  const studentPickerRef = useRef(null);
 
   const apiCall = async (method, path, data) => {
     try {
@@ -32,7 +36,7 @@ function AdminClasses() {
       const cls = await apiCall('GET', '/api/classes');
       setClasses(cls || []);
     } catch (e) {
-      setMessage({ type: 'error', text: e.response?.data?.error || 'Не вдалось завантажити класи' });
+      setMessage({ type: 'error', text: e.response?.data?.error || 'Не вдалося завантажити класи' });
     }
     try {
       const users = await apiClient.get('/api/users');
@@ -48,6 +52,19 @@ function AdminClasses() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!isStudentPickerOpen) return undefined;
+
+    const handleClickOutside = (event) => {
+      if (studentPickerRef.current && !studentPickerRef.current.contains(event.target)) {
+        setIsStudentPickerOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isStudentPickerOpen]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -67,6 +84,9 @@ function AdminClasses() {
     setSelectedClass(cls);
     setNewTeacherId(cls.teacher_id || '');
     setSelectedStudentId('');
+    setSelectedStudentLabel('');
+    setStudentSearchQuery('');
+    setIsStudentPickerOpen(false);
     
     // Load students in this class
     try {
@@ -113,6 +133,9 @@ function AdminClasses() {
       await apiClient.post(`/api/classes/${selectedClass.id}/students`, { student_id: selectedStudentId });
       setMessage({ type: 'success', text: 'Учня додано до класу!' });
       setSelectedStudentId('');
+      setSelectedStudentLabel('');
+      setStudentSearchQuery('');
+      setIsStudentPickerOpen(false);
       
       // Reload class details
       const users = await apiClient.get('/api/users');
@@ -178,6 +201,16 @@ function AdminClasses() {
   };
 
   const availableStudents = getAvailableStudents();
+  const normalizedStudentSearch = studentSearchQuery.trim().toLowerCase();
+  const filteredAvailableStudents = availableStudents.filter((student) => {
+    if (!normalizedStudentSearch) return true;
+    const label = getStudentLabel(student).toLowerCase();
+    return (
+      String(student.name || '').toLowerCase().includes(normalizedStudentSearch) ||
+      String(student.username || '').toLowerCase().includes(normalizedStudentSearch) ||
+      label.includes(normalizedStudentSearch)
+    );
+  });
 
   return (
     <div className="container">
@@ -191,7 +224,7 @@ function AdminClasses() {
             <form onSubmit={handleCreate} className="class-create-form-row">
               <input 
                 className="class-create-input"
-                placeholder="Назва класу (наприкл. 5-A)" 
+                placeholder="Назва класу (наприклад, 5-A)" 
                 title="Введіть назву класу"
                 value={name} 
                 onChange={e=>setName(e.target.value)} 
@@ -324,25 +357,59 @@ function AdminClasses() {
 
           {/* Add Student */}
           <div style={{marginBottom: '30px', padding: '15px', backgroundColor: '#e8f5e9', borderRadius: '8px'}}>
+            <h4 style={{ marginTop: 0, marginBottom: '10px' }}>➕ Додати учня</h4>
             <div className="class-detail-control-row">
-              <select 
-                className="class-detail-select"
-                value={selectedStudentId}
-                title="Виберіть учня щоб додати його до класу"
-                onChange={e => setSelectedStudentId(e.target.value)}
-              >
-                <option value="">(Виберіть учня)</option>
-                {availableStudents.length === 0 && (
-                  <option value="" disabled>
-                    Немає доступних учнів
-                  </option>
+              <div className="class-student-picker" ref={studentPickerRef}>
+                <input
+                  type="text"
+                  className="class-detail-select class-student-search-input"
+                  value={studentSearchQuery}
+                  title="Натисніть та вводьте текст для пошуку учня"
+                  placeholder="Пошук учня за ім'ям або логіном"
+                  onFocus={() => setIsStudentPickerOpen(true)}
+                  onClick={() => setIsStudentPickerOpen(true)}
+                  onChange={(e) => {
+                    setStudentSearchQuery(e.target.value);
+                    setSelectedStudentId('');
+                    setSelectedStudentLabel('');
+                    setIsStudentPickerOpen(true);
+                  }}
+                />
+
+                {isStudentPickerOpen && (
+                  <div className="class-student-options">
+                    {availableStudents.length === 0 ? (
+                      <div className="class-student-empty">Немає доступних учнів</div>
+                    ) : filteredAvailableStudents.length === 0 ? (
+                      <div className="class-student-empty">Нічого не знайдено за вашим запитом</div>
+                    ) : (
+                      filteredAvailableStudents.map((student) => (
+                        <button
+                          key={student.id}
+                          type="button"
+                          className={`class-student-option ${selectedStudentId === student.id ? 'active' : ''}`}
+                          onClick={() => {
+                            const label = getStudentLabel(student);
+                            setSelectedStudentId(student.id);
+                            setSelectedStudentLabel(label);
+                            setStudentSearchQuery(label);
+                            setIsStudentPickerOpen(false);
+                          }}
+                        >
+                          <div className="class-student-option-main">{student.name || 'Без імені'}</div>
+                          <div className="class-student-option-sub">@{student.username || 'без логіну'}</div>
+                        </button>
+                      ))
+                    )}
+                  </div>
                 )}
-                {availableStudents.map(s => (
-                  <option key={s.id} value={s.id}>
-                    {getStudentLabel(s)}
-                  </option>
-                ))}
-              </select>
+
+                {selectedStudentId && (
+                  <div className="class-student-selected-hint">
+                    Вибрано: {selectedStudentLabel}
+                  </div>
+                )}
+              </div>
               <button 
                 onClick={handleAddStudent}
                 className="btn-primary"
@@ -357,7 +424,14 @@ function AdminClasses() {
           {/* Back and Delete Buttons */}
           <div className="class-detail-actions" style={{paddingTop: '15px', borderTop: '1px solid #ddd'}}>
             <button 
-              onClick={() => setShowClassDetails(false)}
+              onClick={() => {
+                setShowClassDetails(false);
+                setSelectedClass(null);
+                setSelectedStudentId('');
+                setSelectedStudentLabel('');
+                setStudentSearchQuery('');
+                setIsStudentPickerOpen(false);
+              }}
               className="btn-secondary"
               title="Натисніть для повернення до списку класів"
             >

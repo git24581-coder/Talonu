@@ -35,6 +35,15 @@ Write-Host "[OK] Dependencies ready" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Stopping old processes..." -ForegroundColor Yellow
+Write-Host "[STOP] PM2 cluster daemon if running..." -ForegroundColor Yellow
+try {
+    Push-Location "$scriptDir\backend"
+    & npx pm2 delete all *> $null
+    & npx pm2 kill *> $null
+    Pop-Location
+} catch {
+    try { Pop-Location } catch {}
+}
 Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 

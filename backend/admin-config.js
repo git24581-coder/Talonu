@@ -6,16 +6,17 @@ const { v4: uuidv4 } = require('uuid');
 const runtimeConfig = {};
 
 const DEFAULT_SETTINGS = {
-  'System': {
+  System: {
     icon: 'SYS',
+    category: 'Система',
     settings: [
       {
         key: 'app_name',
-        label: 'Назва додатку',
-        default: 'Шкільні талони - Система управління талонами',
+        label: 'Назва застосунку',
+        default: 'Шкільні талони',
         type: 'string',
         category: 'System',
-        description: 'Назва системи'
+        description: 'Назва системи, яка відображається в інтерфейсі'
       },
       {
         key: 'app_version',
@@ -23,7 +24,8 @@ const DEFAULT_SETTINGS = {
         default: '1.0.0',
         type: 'string',
         category: 'System',
-        description: 'Версія системи'
+        description: 'Поточна версія застосунку',
+        editable: false
       },
       {
         key: 'maintenance_mode',
@@ -31,49 +33,57 @@ const DEFAULT_SETTINGS = {
         default: false,
         type: 'boolean',
         category: 'System',
-        description: 'Увімкнути режим обслуговування'
+        description: 'Тимчасово обмежує доступ до системи'
       }
     ]
   },
-  'Vouchers': {
+  Vouchers: {
     icon: 'VOU',
+    category: 'Талони',
     settings: [
       {
         key: 'voucher_expiry_hours',
-        label: 'Час дії талону (часів)',
+        label: 'Термін дії талону (години)',
         default: 9,
         type: 'number',
         category: 'Vouchers',
-        description: 'Кількість годин для дії талону'
+        description: 'Скільки годин талон залишається дійсним',
+        min: 1,
+        max: 72
       },
       {
         key: 'voucher_auto_generate',
-        label: 'Автоматичне генерування',
+        label: 'Автогенерація талонів',
         default: true,
         type: 'boolean',
         category: 'Vouchers',
-        description: 'Автоматично генерувати талони для нових учнів'
+        description: 'Автоматично створювати талони для присутніх учнів'
       },
       {
         key: 'voucher_daily_limit',
-        label: 'Щоденний ліміт',
+        label: 'Добовий ліміт талонів',
         default: 1000,
         type: 'number',
         category: 'Vouchers',
-        description: 'Максимум талонів на день'
+        description: 'Максимальна кількість талонів, які можна видати за день',
+        min: 1,
+        max: 100000
       }
     ]
   },
-  'Security': {
+  Security: {
     icon: 'SEC',
+    category: 'Безпека',
     settings: [
       {
         key: 'jwt_expiry_hours',
-        label: 'Час дії JWT токена (годин)',
+        label: 'Термін дії JWT (години)',
         default: 24,
         type: 'number',
         category: 'Security',
-        description: 'Час до закінчення JWT токена'
+        description: 'Час до автоматичного завершення сесії',
+        min: 1,
+        max: 168
       },
       {
         key: 'max_login_attempts',
@@ -81,20 +91,25 @@ const DEFAULT_SETTINGS = {
         default: 5,
         type: 'number',
         category: 'Security',
-        description: 'Максимум невдалих спроб входу перед блокуванням'
+        description: 'Кількість невдалих спроб до тимчасового блокування',
+        min: 1,
+        max: 20
       },
       {
         key: 'session_timeout_minutes',
-        label: 'Тайм-аут сесії (хвилин)',
+        label: 'Таймаут сесії (хвилини)',
         default: 60,
         type: 'number',
         category: 'Security',
-        description: 'Час неактивності перед логаутом'
+        description: 'Час бездіяльності до автоматичного виходу',
+        min: 5,
+        max: 1440
       }
     ]
   },
-  'Database': {
+  Database: {
     icon: 'DB',
+    category: 'База даних',
     settings: [
       {
         key: 'db_backup_daily',
@@ -102,36 +117,39 @@ const DEFAULT_SETTINGS = {
         default: true,
         type: 'boolean',
         category: 'Database',
-        description: 'Автоматичний дефрагментуючи бекап БД'
+        description: 'Дозволяє автоматичне щоденне резервне копіювання'
       },
       {
         key: 'db_cache_ttl_seconds',
-        label: 'TTL кешу БД (сек)',
+        label: 'TTL кешу БД (секунди)',
         default: 300,
         type: 'number',
         category: 'Database',
-        description: 'Час життя кешу запитів'
+        description: 'Як довго тримати дані в кеші',
+        min: 0,
+        max: 86400
       }
     ]
   },
-  'Notifications': {
+  Notifications: {
     icon: 'NOT',
+    category: 'Сповіщення',
     settings: [
       {
         key: 'notify_voucher_expiry',
-        label: 'Сповіщення про закінчення',
+        label: 'Сповіщення про завершення талонів',
         default: true,
         type: 'boolean',
         category: 'Notifications',
-        description: 'Сповіщувати про закінчення талонів'
+        description: 'Сповіщати адміністраторів про завершення терміну дії талонів'
       },
       {
         key: 'notify_low_stock',
-        label: 'Сповіщення про мало талонів',
+        label: 'Сповіщення про малий залишок',
         default: true,
         type: 'boolean',
         category: 'Notifications',
-        description: 'Сповіщувати коли малу кількість талонів'
+        description: 'Сповіщати, коли доступних талонів стає мало'
       }
     ]
   }
@@ -142,43 +160,43 @@ const DEFAULT_SETTINGS = {
  */
 function initAdminConfig(db, callback) {
   try {
-    // Create config table if it doesn't exist
-    db.run(`
+    db.run(
+      `
       CREATE TABLE IF NOT EXISTS config (
         id TEXT PRIMARY KEY,
         key TEXT NOT NULL UNIQUE,
         value TEXT NOT NULL,
         type TEXT DEFAULT 'string',
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_by TEXT,
         description TEXT
       )
-    `, (err) => {
-      if (err) {
-        console.error('Error creating config table:', err);
-        if (callback) callback(err);
-        return;
-      }
-
-      // Load existing configs into runtime config
-      db.all('SELECT key, value, type FROM config', (err, rows) => {
+      `,
+      (err) => {
         if (err) {
-          console.error('Error loading config:', err);
+          console.error('Error creating config table:', err);
           if (callback) callback(err);
           return;
         }
 
-        if (rows && Array.isArray(rows)) {
-          rows.forEach(config => {
-            const parsedValue = parseConfigValue(config.value, config.type);
-            runtimeConfig[config.key] = parsedValue;
-          });
-        }
+        db.all('SELECT key, value, type FROM config', (loadErr, rows) => {
+          if (loadErr) {
+            console.error('Error loading config:', loadErr);
+            if (callback) callback(loadErr);
+            return;
+          }
 
-        console.log(`✓ Admin config initialized (${Object.keys(runtimeConfig).length} settings loaded)`);
-        if (callback) callback(null);
-      });
-    });
+          if (rows && Array.isArray(rows)) {
+            rows.forEach((config) => {
+              runtimeConfig[config.key] = parseConfigValue(config.value, config.type);
+            });
+          }
+
+          console.log(`Admin config initialized (${Object.keys(runtimeConfig).length} settings loaded)`);
+          if (callback) callback(null);
+        });
+      }
+    );
   } catch (err) {
     console.error('Error initializing admin config:', err);
     if (callback) callback(err);
@@ -189,19 +207,20 @@ function initAdminConfig(db, callback) {
  * Parse config value based on type
  */
 function parseConfigValue(value, type) {
-  // Handle null/undefined
   if (value === null || value === undefined) {
     return undefined;
   }
 
   if (type === 'boolean') {
     if (typeof value === 'boolean') return value;
-    return value === 'true' || value === '1' || value === true;
+    return value === 'true' || value === '1' || value === true || value === 1;
   }
+
   if (type === 'number') {
-    const num = typeof value === 'number' ? value : parseInt(value, 10);
-    return isNaN(num) ? 0 : num;
+    const num = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(num) ? num : 0;
   }
+
   if (type === 'json') {
     if (typeof value === 'object') return value;
     try {
@@ -211,6 +230,7 @@ function parseConfigValue(value, type) {
       return value;
     }
   }
+
   return value;
 }
 
@@ -225,7 +245,6 @@ function saveConfigValue(db, key, value, type, userId, callback) {
 
   const executeSave = (resolve, reject) => {
     try {
-      // Validate key exists in settings
       const setting = getSettingDefinition(key);
       if (!setting) {
         const err = new Error(`Unknown config key: ${key}`);
@@ -234,45 +253,63 @@ function saveConfigValue(db, key, value, type, userId, callback) {
         return;
       }
 
-      // Use provided type or default to setting type
       const configType = type || setting.type;
-
-      // Parse and validate value
       const parsedValue = parseConfigValue(value, configType);
-      let stringValue;
 
-      // Convert to string for storage
-      if (configType === 'json' || typeof parsedValue === 'object') {
-        stringValue = JSON.stringify(parsedValue);
-      } else {
-        stringValue = String(parsedValue);
-      }
-
-      // Validate value constraints
-      if (configType === 'number' && Number.isNaN(parsedValue)) {
+      if (configType === 'number' && !Number.isFinite(parsedValue)) {
         const err = new Error(`Invalid number value for ${key}: ${value}`);
         console.error(err);
         reject(err);
         return;
       }
 
-      const id = uuidv4();
+      const stringValue = configType === 'json' || typeof parsedValue === 'object'
+        ? JSON.stringify(parsedValue)
+        : String(parsedValue);
 
-      db.run(`
-        INSERT OR REPLACE INTO config (id, key, value, type, updated_by, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
-      `, [id, key, stringValue, configType, userId || null], (err) => {
-        if (err) {
-          console.error(`Error saving config value ${key}:`, err);
-          reject(err);
+      db.get('SELECT id FROM config WHERE key = ?', [key], (selectErr, existing) => {
+        if (selectErr) {
+          console.error(`Error checking config key ${key}:`, selectErr);
+          reject(selectErr);
           return;
         }
 
-        // Update runtime config with parsed value
-        runtimeConfig[key] = parsedValue;
+        if (existing && existing.id) {
+          db.run(
+            `UPDATE config
+             SET value = ?, type = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE key = ?`,
+            [stringValue, configType, userId || null, key],
+            (updateErr) => {
+              if (updateErr) {
+                console.error(`Error updating config value ${key}:`, updateErr);
+                reject(updateErr);
+                return;
+              }
 
-        console.log(`Config saved: ${key} = ${stringValue} (type: ${configType})`);
-        resolve({ key, value: parsedValue, type: configType });
+              runtimeConfig[key] = parsedValue;
+              resolve({ key, value: parsedValue, type: configType });
+            }
+          );
+          return;
+        }
+
+        const id = uuidv4();
+        db.run(
+          `INSERT INTO config (id, key, value, type, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          [id, key, stringValue, configType, userId || null],
+          (insertErr) => {
+            if (insertErr) {
+              console.error(`Error inserting config value ${key}:`, insertErr);
+              reject(insertErr);
+              return;
+            }
+
+            runtimeConfig[key] = parsedValue;
+            resolve({ key, value: parsedValue, type: configType });
+          }
+        );
       });
     } catch (err) {
       console.error(`Error in saveConfigValue ${key}:`, err);
@@ -334,8 +371,9 @@ function getAllConfigurableSettings() {
  */
 function getSettingDefinition(key) {
   for (const category in DEFAULT_SETTINGS) {
-    if (DEFAULT_SETTINGS[category].settings && Array.isArray(DEFAULT_SETTINGS[category].settings)) {
-      const setting = DEFAULT_SETTINGS[category].settings.find(s => s.key === key);
+    const categorySettings = DEFAULT_SETTINGS[category]?.settings;
+    if (Array.isArray(categorySettings)) {
+      const setting = categorySettings.find((s) => s.key === key);
       if (setting) return setting;
     }
   }

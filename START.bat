@@ -39,6 +39,9 @@ echo.
 
 REM Stop any existing Node processes
 echo [Stopping] Existing services...
+echo [Stopping] PM2 daemon if running...
+call npx pm2 delete all >nul 2>&1
+call npx pm2 kill >nul 2>&1
 taskkill /F /IM node.exe /T >nul 2>&1
 timeout /t 1 >nul
 

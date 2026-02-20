@@ -19,16 +19,299 @@ const IORedis = require('ioredis');
 const { Queue, QueueScheduler } = require('bullmq');
 const clientProm = require('prom-client');
 const dbCache = require('./db-cache');
+const { monitorEventLoopDelay } = require('perf_hooks');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const IS_PRODUCTION = NODE_ENV === 'production';
 const JWT_SECRET = process.env.JWT_SECRET || 'please-change-this-secret-in-production';
+const DEFAULT_JWT_SECRET = 'please-change-this-secret-in-production';
+const REFRESH_COOKIE_NAME = 'refreshToken';
+const REFRESH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+app.disable('x-powered-by');
 
 const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS || '12', 10);
 // Voucher expiration hours (configurable via env)
 const VOUCHER_EXPIRY_HOURS = parseInt(process.env.VOUCHER_EXPIRY_HOURS || '9', 10);
 // Demo seed is disabled by default; set AUTO_SEED_DEMO_DATA=true to enable.
 const AUTO_SEED_DEMO_DATA = String(process.env.AUTO_SEED_DEMO_DATA || 'false').toLowerCase() === 'true';
+const MAX_INPUT_STRING_LENGTH = getEnvInt('MAX_INPUT_STRING_LENGTH', 4096, 256, 65536);
+const PROTOTYPE_POLLUTION_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+const VALID_USER_ROLES = new Set(['student', 'teacher', 'cashier', 'admin']);
+const SELF_REGISTER_ALLOWED_ROLES = new Set(
+  String(process.env.SELF_REGISTER_ALLOWED_ROLES || 'student')
+    .split(',')
+    .map((roleName) => String(roleName || '').trim().toLowerCase())
+    .filter((roleName) => VALID_USER_ROLES.has(roleName))
+);
+if (SELF_REGISTER_ALLOWED_ROLES.size === 0) {
+  SELF_REGISTER_ALLOWED_ROLES.add('student');
+}
+
+function getEnvInt(name, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number.parseInt(process.env[name] || '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function getEnvFloat(name, fallback, min = 0, max = 1) {
+  const parsed = Number.parseFloat(process.env[name] || '');
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function normalizeRole(roleValue) {
+  const normalized = String(roleValue || 'student').trim().toLowerCase();
+  return VALID_USER_ROLES.has(normalized) ? normalized : 'student';
+}
+
+function isStrongPassword(password) {
+  if (typeof password !== 'string') return false;
+  if (password.length < 10 || password.length > 128) return false;
+  if (!/[a-z]/.test(password)) return false;
+  if (!/[A-Z]/.test(password)) return false;
+  if (!/\d/.test(password)) return false;
+  if (!/[^A-Za-z0-9]/.test(password)) return false;
+  return true;
+}
+
+function normalizeSameSite(rawValue) {
+  const normalized = String(rawValue || '').trim().toLowerCase();
+  if (normalized === 'strict') return 'Strict';
+  if (normalized === 'lax') return 'Lax';
+  if (normalized === 'none') return 'None';
+  return IS_PRODUCTION ? 'Strict' : 'Lax';
+}
+
+const REFRESH_COOKIE_SAMESITE = normalizeSameSite(
+  process.env.REFRESH_COOKIE_SAMESITE || (IS_PRODUCTION ? 'Strict' : 'Lax')
+);
+
+function getRefreshCookieOptions() {
+  const cookieOptions = {
+    httpOnly: true,
+    secure: IS_PRODUCTION,
+    sameSite: REFRESH_COOKIE_SAMESITE,
+    maxAge: REFRESH_COOKIE_MAX_AGE_MS,
+    path: '/api/auth'
+  };
+
+  const cookieDomain = String(process.env.REFRESH_COOKIE_DOMAIN || '').trim();
+  if (cookieDomain) {
+    cookieOptions.domain = cookieDomain;
+  }
+
+  if (cookieOptions.sameSite === 'None') {
+    cookieOptions.secure = true;
+  }
+
+  return cookieOptions;
+}
+
+function getRefreshCookieClearOptions() {
+  const cookieOptions = getRefreshCookieOptions();
+  delete cookieOptions.maxAge;
+  return cookieOptions;
+}
+
+function ensureSecurityConfiguration() {
+  if (!IS_PRODUCTION) return;
+
+  if (!JWT_SECRET || JWT_SECRET === DEFAULT_JWT_SECRET || JWT_SECRET.length < 32) {
+    throw new Error('Unsafe JWT_SECRET in production. Set a random value with length >= 32.');
+  }
+
+  const rawOrigins = String(process.env.CORS_ORIGINS || '').trim();
+  if (!rawOrigins) {
+    throw new Error('CORS_ORIGINS must be set in production.');
+  }
+
+  const parsedOrigins = rawOrigins.split(',').map((origin) => origin.trim()).filter(Boolean);
+  if (parsedOrigins.length === 0 || parsedOrigins.includes('*')) {
+    throw new Error('CORS_ORIGINS must contain explicit origins only (wildcard is not allowed).');
+  }
+
+  if (SELF_REGISTER_ALLOWED_ROLES.has('admin')) {
+    throw new Error('SELF_REGISTER_ALLOWED_ROLES must not include admin in production.');
+  }
+}
+
+function safeTrimmedString(value, maxLen = MAX_INPUT_STRING_LENGTH) {
+  if (typeof value !== 'string') return value;
+  const withoutNulls = value.replace(/\u0000/g, '');
+  if (withoutNulls.length <= maxLen) return withoutNulls;
+  return withoutNulls.slice(0, maxLen);
+}
+
+function sanitizeInputValue(value, depth = 0) {
+  if (depth > 20) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    return safeTrimmedString(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeInputValue(entry, depth + 1));
+  }
+
+  if (value && typeof value === 'object') {
+    const sanitized = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (PROTOTYPE_POLLUTION_KEYS.has(key)) continue;
+      sanitized[key] = sanitizeInputValue(entry, depth + 1);
+    }
+    return sanitized;
+  }
+
+  return value;
+}
+
+function tryDecodeBearerUser(req) {
+  try {
+    const authHeader = req.headers.authorization || '';
+    if (!authHeader.startsWith('Bearer ')) return null;
+    const token = authHeader.slice('Bearer '.length).trim();
+    if (!token) return null;
+    return jwt.verify(token, JWT_SECRET);
+  } catch (err) {
+    return null;
+  }
+}
+
+const loginValidationRules = [
+  body('username')
+    .exists({ checkFalsy: true })
+    .withMessage('Username is required')
+    .isString()
+    .withMessage('Username must be a string')
+    .trim()
+    .isLength({ min: 3, max: 64 })
+    .withMessage('Username length must be 3-64 characters'),
+  body('password')
+    .exists({ checkFalsy: true })
+    .withMessage('Password is required')
+    .isString()
+    .withMessage('Password must be a string')
+    .isLength({ min: 1, max: 128 })
+    .withMessage('Password length is invalid')
+];
+
+const registerValidationRules = [
+  body('username')
+    .exists({ checkFalsy: true })
+    .withMessage('Username is required')
+    .isString()
+    .withMessage('Username must be a string')
+    .trim()
+    .isLength({ min: 3, max: 64 })
+    .withMessage('Username length must be 3-64 characters')
+    .matches(/^[a-zA-Z0-9_.@-]+$/)
+    .withMessage('Username contains forbidden characters'),
+  body('password')
+    .exists({ checkFalsy: true })
+    .withMessage('Password is required')
+    .isString()
+    .withMessage('Password must be a string')
+    .isLength({ min: 10, max: 128 })
+    .withMessage('Password length must be 10-128 characters'),
+  body('name')
+    .optional({ nullable: true })
+    .isString()
+    .withMessage('Name must be a string')
+    .trim()
+    .isLength({ min: 2, max: 120 })
+    .withMessage('Name length must be 2-120 characters'),
+  body('role')
+    .optional({ nullable: true })
+    .isString()
+    .withMessage('Role must be a string')
+    .trim()
+    .custom((value) => VALID_USER_ROLES.has(String(value || '').toLowerCase()))
+    .withMessage('Role is invalid'),
+  body('class_id')
+    .optional({ nullable: true })
+    .isString()
+    .withMessage('class_id must be a string')
+    .trim()
+    .isLength({ min: 1, max: 64 })
+    .withMessage('class_id length is invalid')
+];
+
+function handleValidationErrors(req, res) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) return false;
+
+  const details = errors.array({ onlyFirstError: true }).map((entry) => ({
+    field: entry.path,
+    message: entry.msg
+  }));
+
+  res.status(400).json({ error: 'Invalid input data', details });
+  return true;
+}
+
+function respondAuthFailure(res, message = 'Невірне ім\'я користувача або пароль') {
+  setTimeout(() => {
+    if (!res.headersSent) {
+      res.status(401).json({ error: message });
+    }
+  }, LOGIN_FAILURE_DELAY_MS);
+}
+
+function isAllowedRequestOrigin(origin, req) {
+  if (!origin || typeof origin !== 'string') return false;
+
+  if (allowedOrigins && allowedOrigins.includes(origin)) {
+    return true;
+  }
+
+  const host = req.get('host');
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = forwardedProto || req.protocol || 'http';
+  if (host && origin === `${proto}://${host}`) {
+    return true;
+  }
+
+  if (!IS_PRODUCTION && isLocalIP(origin)) {
+    return true;
+  }
+
+  return false;
+}
+
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '64kb';
+const URLENCODED_BODY_LIMIT = process.env.URLENCODED_BODY_LIMIT || '64kb';
+const REQUEST_URL_MAX_LENGTH = getEnvInt('REQUEST_URL_MAX_LENGTH', 2048, 512, 16384);
+const MAX_CONCURRENT_REQUESTS = getEnvInt('MAX_CONCURRENT_REQUESTS', 400, 50, 5000);
+const API_RATE_LIMIT_WINDOW_MS = getEnvInt('API_RATE_LIMIT_WINDOW_MS', 60 * 1000, 1000, 60 * 60 * 1000);
+const API_RATE_LIMIT_MAX = getEnvInt('API_RATE_LIMIT_MAX', 300, 10, 20000);
+const AUTH_RATE_LIMIT_WINDOW_MS = getEnvInt('AUTH_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000, 1000, 60 * 60 * 1000);
+const AUTH_RATE_LIMIT_MAX = getEnvInt('AUTH_RATE_LIMIT_MAX', 20, 3, 500);
+const LOGIN_FAILURE_DELAY_MS = getEnvInt('LOGIN_FAILURE_DELAY_MS', 350, 100, 5000);
+const HEAVY_RATE_LIMIT_WINDOW_MS = getEnvInt('HEAVY_RATE_LIMIT_WINDOW_MS', 60 * 1000, 1000, 60 * 60 * 1000);
+const HEAVY_RATE_LIMIT_MAX = getEnvInt('HEAVY_RATE_LIMIT_MAX', 120, 10, 2000);
+const ACCESS_LOG_ENABLED = String(process.env.ACCESS_LOG_ENABLED || (process.env.NODE_ENV === 'production' ? 'false' : 'true')).toLowerCase() === 'true';
+const ACCESS_LOG_SAMPLE_RATE = getEnvFloat('ACCESS_LOG_SAMPLE_RATE', 1, 0.01, 1);
+const MAX_HEAP_USED_MB = getEnvInt('MAX_HEAP_USED_MB', 1024, 128, 16384);
+const MAX_EVENT_LOOP_P99_LAG_MS = getEnvInt('MAX_EVENT_LOOP_P99_LAG_MS', 250, 20, 5000);
+const QR_MEMORY_CACHE_TTL_MS = getEnvInt('QR_MEMORY_CACHE_TTL_MS', 7 * 24 * 60 * 60 * 1000, 1000, 30 * 24 * 60 * 60 * 1000);
+const QR_MEMORY_CACHE_MAX_ITEMS = getEnvInt('QR_MEMORY_CACHE_MAX_ITEMS', 3000, 100, 20000);
+
+const SERVER_KEEP_ALIVE_TIMEOUT_MS = getEnvInt('SERVER_KEEP_ALIVE_TIMEOUT_MS', 65 * 1000, 1000, 180 * 1000);
+const SERVER_HEADERS_TIMEOUT_MS = getEnvInt('SERVER_HEADERS_TIMEOUT_MS', 66 * 1000, 2000, 180 * 1000);
+const SERVER_REQUEST_TIMEOUT_MS = getEnvInt('SERVER_REQUEST_TIMEOUT_MS', 30 * 1000, 2000, 180 * 1000);
+const SERVER_SOCKET_TIMEOUT_MS = getEnvInt('SERVER_SOCKET_TIMEOUT_MS', 35 * 1000, 2000, 180 * 1000);
+const SERVER_MAX_CONNECTIONS = getEnvInt('SERVER_MAX_CONNECTIONS', 2000, 100, 50000);
+const SHUTDOWN_TIMEOUT_MS = getEnvInt('SHUTDOWN_TIMEOUT_MS', 10 * 1000, 1000, 60 * 1000);
+
+const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
+eventLoopDelayMonitor.enable();
+const runtimeMetricsBypassPaths = new Set(['/api/health', '/api/ready', '/metrics']);
+let activeRequests = 0;
 
 // Trust proxy FIRST before rate limiting (express-rate-limit validation)
 // Set trust proxy to 1 hop instead of true for security with rate limiting
@@ -62,6 +345,41 @@ const isLocalIP = (origin) => {
     return false;
   }
 };
+
+ensureSecurityConfiguration();
+
+function getRuntimePressure() {
+  const p99Raw = eventLoopDelayMonitor.percentile(99);
+  const eventLoopP99LagMs = Number.isFinite(p99Raw) ? Math.round(p99Raw / 1e6) : 0;
+  const memory = process.memoryUsage();
+  const heapUsedMb = Math.round(memory.heapUsed / (1024 * 1024));
+  const rssMb = Math.round(memory.rss / (1024 * 1024));
+  return { eventLoopP99LagMs, heapUsedMb, rssMb, activeRequests };
+}
+
+function getOverloadReason() {
+  const pressure = getRuntimePressure();
+  if (pressure.activeRequests >= MAX_CONCURRENT_REQUESTS) {
+    return `too many concurrent requests (${pressure.activeRequests}/${MAX_CONCURRENT_REQUESTS})`;
+  }
+  if (pressure.heapUsedMb >= MAX_HEAP_USED_MB) {
+    return `high heap usage (${pressure.heapUsedMb}MB/${MAX_HEAP_USED_MB}MB)`;
+  }
+  if (pressure.eventLoopP99LagMs >= MAX_EVENT_LOOP_P99_LAG_MS) {
+    return `high event loop lag (${pressure.eventLoopP99LagMs}ms/${MAX_EVENT_LOOP_P99_LAG_MS}ms)`;
+  }
+  return null;
+}
+
+function normalizeRouteForMetrics(req) {
+  if (req.route && req.route.path) {
+    return `${req.baseUrl || ''}${req.route.path}`;
+  }
+  const pathValue = req.path || req.originalUrl || 'unknown';
+  return String(pathValue)
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/ig, ':uuid')
+    .replace(/\/\d+(?=\/|$)/g, '/:id');
+}
 // ========== DEVELOPMENT CORS HELPER - MUST BE FIRST THING AFTER APP CREATION ==========
 // This MUST run before everything else to set CORS headers
 if (process.env.NODE_ENV !== 'production') {
@@ -107,44 +425,131 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
+const mutatingMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+app.use((req, res, next) => {
+  if (!IS_PRODUCTION) return next();
+  if (!req.path.startsWith('/api')) return next();
+  if (!mutatingMethods.has(req.method)) return next();
+  if (req.path === '/api/health' || req.path === '/api/ready') return next();
+
+  const origin = req.get('origin') || req.get('Origin') || '';
+  if (!isAllowedRequestOrigin(origin, req)) {
+    return res.status(403).json({ error: 'Origin is not allowed for this operation' });
+  }
+  return next();
+});
+
+app.use((req, res, next) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(self), geolocation=(), microphone=()');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  next();
+});
+
 // Apply Helmet AFTER CORS so CORS headers can be set properly
 // Security middleware
 const allowUnsafeEval = process.env.ALLOW_UNSAFE_EVAL === 'true';
-if (process.env.NODE_ENV === 'production') {
-  // development: use an explicit CSP; allow unsafe-eval only when requested
-  const cspDirectives = allowUnsafeEval ? {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-eval'", "'unsafe-inline'"],
-      connectSrc: ["'self'", "http://localhost:5000", "http://127.0.0.1:5000"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", 'data:'],
-      objectSrc: ["'none'"],
-      baseUri: ["'self'"],
-      frameAncestors: ["'self'"]
+if (IS_PRODUCTION) {
+  const connectSrc = ["'self'"];
+  if (allowedOrigins && allowedOrigins.length > 0) {
+    connectSrc.push(...allowedOrigins);
+  }
+
+  const scriptSrc = allowUnsafeEval
+    ? ["'self'", "'unsafe-eval'"]
+    : ["'self'"];
+
+  app.use(helmet({
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    referrerPolicy: { policy: 'no-referrer' },
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc,
+        connectSrc,
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:'],
+        objectSrc: ["'none'"],
+        baseUri: ["'none'"],
+        frameAncestors: ["'none'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: []
+      }
     }
-  } : {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      connectSrc: ["'self'", "http://localhost:5000", "http://127.0.0.1:5000"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", 'data:'],
-      objectSrc: ["'none'"],
-      baseUri: ["'self'"],
-      frameAncestors: ["'self'"]
-    }
-  };
-  app.use(helmet({ contentSecurityPolicy: cspDirectives }));
+  }));
   console.log(`🔒 Helmet enabled (production mode)`);
 } else {
-  console.log(`🔒 Helmet disabled in development (allows CORS headers)`);
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    hsts: false
+  }));
+  console.log(`🔒 Helmet enabled with development-safe profile`);
 }
 
-app.use(express.json());
+app.use((req, res, next) => {
+  const requestUrl = req.originalUrl || req.url || '';
+  if (requestUrl.length > REQUEST_URL_MAX_LENGTH) {
+    return res.status(414).json({ error: 'Request URL is too long' });
+  }
+
+  const overloadReason = getOverloadReason();
+  if (overloadReason && !runtimeMetricsBypassPaths.has(req.path || '')) {
+    return res.status(503).json({
+      error: 'Server is temporarily overloaded. Please try again in a few seconds.',
+      reason: overloadReason
+    });
+  }
+
+  activeRequests += 1;
+  let released = false;
+  const release = () => {
+    if (!released) {
+      released = true;
+      activeRequests = Math.max(0, activeRequests - 1);
+    }
+  };
+
+  res.on('finish', release);
+  res.on('close', release);
+  next();
+});
+
+app.use((req, res, next) => {
+  res.setTimeout(SERVER_REQUEST_TIMEOUT_MS, () => {
+    if (!res.headersSent) {
+      res.status(503).json({ error: 'Request timeout under load. Please retry.' });
+    }
+    if (typeof req.destroy === 'function') {
+      req.destroy();
+    }
+  });
+  next();
+});
+
+app.use(express.json({ limit: JSON_BODY_LIMIT, strict: true }));
+app.use(express.urlencoded({ extended: true, limit: URLENCODED_BODY_LIMIT }));
 app.use(cookieParser());
 // HTTP compression to reduce bandwidth for many concurrent users
 app.use(compression({ threshold: 1024 }));
+
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  next();
+});
+
+app.use((req, res, next) => {
+  try {
+    if (req.body && typeof req.body === 'object') {
+      req.body = sanitizeInputValue(req.body);
+    }
+  } catch (err) {
+    return res.status(400).json({ error: 'Invalid request payload' });
+  }
+  return next();
+});
 
 // ========== REDIS + QUEUES + METRICS ==========
 // Redis is OPTIONAL - only enable if explicitly configured
@@ -198,8 +603,15 @@ try {
 } catch (e) {}
 const requestCounter = new clientProm.Counter({ name: 'http_requests_total', help: 'Total HTTP requests', labelNames: ['method', 'route', 'status'] });
 const voucherCreatedCounter = new clientProm.Counter({ name: 'vouchers_created_total', help: 'Total vouchers created' });
+const publicMetricsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Metrics endpoint rate limit exceeded.'
+});
 
-app.get('/metrics', async (req, res) => {
+app.get('/metrics', publicMetricsLimiter, async (req, res) => {
   try {
     res.set('Content-Type', clientProm.register.contentType);
     res.end(await clientProm.register.metrics());
@@ -209,13 +621,44 @@ app.get('/metrics', async (req, res) => {
 });
 
 // QR image cache helper: uses Redis when available to avoid regenerating QR codes under load
+const qrMemoryCache = new Map();
+
+function getQrMemoryCache(key) {
+  const entry = qrMemoryCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    qrMemoryCache.delete(key);
+    return null;
+  }
+  // Move to end (simple LRU behavior).
+  qrMemoryCache.delete(key);
+  qrMemoryCache.set(key, entry);
+  return entry.value;
+}
+
+function setQrMemoryCache(key, value) {
+  qrMemoryCache.set(key, { value, expiresAt: Date.now() + QR_MEMORY_CACHE_TTL_MS });
+  while (qrMemoryCache.size > QR_MEMORY_CACHE_MAX_ITEMS) {
+    const oldest = qrMemoryCache.keys().next();
+    if (oldest.done) break;
+    qrMemoryCache.delete(oldest.value);
+  }
+}
+
 async function getQrImageCached(qrCode) {
   if (!qrCode) return null;
   const key = `qr:${qrCode}`;
+
+  const memoryCached = getQrMemoryCache(key);
+  if (memoryCached) return memoryCached;
+
   if (redis) {
     try {
       const cached = await redis.get(key);
-      if (cached) return cached;
+      if (cached) {
+        setQrMemoryCache(key, cached);
+        return cached;
+      }
     } catch (e) {
       // ignore
     }
@@ -223,6 +666,7 @@ async function getQrImageCached(qrCode) {
 
   try {
     const data = await QRCode.toDataURL(qrCode, { errorCorrectionLevel: 'H', type: 'image/png', width: 500, margin: 2, color: { dark: '#000000', light: '#FFFFFF' } });
+    setQrMemoryCache(key, data);
     if (redis) {
       try { await redis.set(key, data, 'EX', 60 * 60 * 24 * 7); } catch (e) {}
     }
@@ -246,6 +690,7 @@ const logsDir = path.join(__dirname, 'logs');
 try { if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir); } catch (e) {}
 const logFile = path.join(logsDir, 'app.log');
 function appendLog(line) {
+  if (!ACCESS_LOG_ENABLED) return;
   const ts = new Date().toISOString();
   fs.appendFile(logFile, `[${ts}] ${line}\n`, () => {});
 }
@@ -256,20 +701,53 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     const userId = req.user ? req.user.id : '-';
     const ip = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || '-';
-    appendLog(`${ip} ${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms user=${userId}`);
+    if (ACCESS_LOG_ENABLED && Math.random() <= ACCESS_LOG_SAMPLE_RATE) {
+      appendLog(`${ip} ${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms user=${userId}`);
+    }
     try {
-      requestCounter.inc({ method: req.method, route: req.route && req.route.path ? req.route.path : req.path, status: res.statusCode });
+      requestCounter.inc({
+        method: req.method,
+        route: normalizeRouteForMetrics(req),
+        status: String(res.statusCode)
+      });
     } catch (e) {}
   });
   next();
 });
 
 // Rate limiters: protect auth endpoints and heavy operations
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false, message: 'Too many auth attempts, try again later.' });
-const heavyLimiter = rateLimit({ windowMs: 60 * 1000, max: 40, standardHeaders: true, legacyHeaders: false, message: 'Too many requests, slow down.' });
+const apiLimiter = rateLimit({
+  windowMs: API_RATE_LIMIT_WINDOW_MS,
+  max: API_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path === '/health' || req.path === '/ready',
+  message: 'Too many requests from this IP, please slow down.'
+});
+const authLimiter = rateLimit({
+  windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+  max: AUTH_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many auth attempts, try again later.'
+});
+const heavyLimiter = rateLimit({
+  windowMs: HEAVY_RATE_LIMIT_WINDOW_MS,
+  max: HEAVY_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests to heavy endpoints, slow down.'
+});
+app.use('/api', apiLimiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/refresh', authLimiter);
 app.use('/api/vouchers/use', heavyLimiter);
+app.use('/api/vouchers/check', heavyLimiter);
+app.use('/api/vouchers/my', heavyLimiter);
+app.use('/api/vouchers/all', heavyLimiter);
+app.use('/api/vouchers/user', heavyLimiter);
+app.use('/api/users', heavyLimiter);
 
 // ========== DATABASE INITIALIZATION ==========
 // Initialize database (SQLite or PostgreSQL based on DATABASE_URL env var)
@@ -345,6 +823,27 @@ function createRefreshToken(userId) {
   // store only hash in DB to reduce impact of DB leak
   db.run('INSERT INTO refresh_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)', [id, userId, tokenHash, expiresAt]);
   return { token, expiresAt };
+}
+
+function cleanupExpiredRefreshTokens() {
+  const nowIso = new Date().toISOString();
+  db.run('DELETE FROM refresh_tokens WHERE expires_at <= ?', [nowIso], (err, result) => {
+    if (err) {
+      console.error('❌ Refresh token cleanup error:', err);
+      return;
+    }
+    if (result && result.changes > 0) {
+      console.log(`🧹 Removed ${result.changes} expired refresh token(s)`);
+    }
+  });
+}
+
+function sanitizeUsername(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-@]/g, '')
+    .slice(0, 150);
 }
 
 // Helper: check if voucher is expired (9 hours from issuance)
@@ -532,6 +1031,10 @@ const authenticateToken = (req, res, next) => {
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) return res.status(401).json({ error: 'Токен не знайдений' });
+  if (token.length > 4096) return res.status(401).json({ error: 'Невалідний токен' });
+  if (!/^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+$/.test(token)) {
+    return res.status(401).json({ error: 'Невалідний токен' });
+  }
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: 'Невалідний токен' });
@@ -543,24 +1046,42 @@ const authenticateToken = (req, res, next) => {
 // ============ АУТЕНТИФІКАЦІЯ ============
 
 // Реєстрація
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', registerValidationRules, async (req, res) => {
+  if (handleValidationErrors(req, res)) return;
+
   const { username, password, name, role } = req.body;
   const { class_id } = req.body || {};
 
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username та password обов\'язкові' });
-  }
-
   try {
     // Basic input validation / sanitization
-    const cleanUsername = String(username).trim().toLowerCase().replace(/[^a-z0-9_.-@]/g, '').slice(0,150);
+    const cleanUsername = sanitizeUsername(username);
     const cleanName = name ? String(name).trim().replace(/[<>"'`]/g, '') : null;
-    if (!cleanUsername || typeof password !== 'string' || password.length < 6) {
-      return res.status(400).json({ error: 'Невірні дані реєстрації' });
+    const requestedRole = normalizeRole(role);
+    const actor = tryDecodeBearerUser(req);
+    const createdByAdmin = Boolean(actor && actor.role === 'admin');
+
+    if (!cleanUsername || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Invalid registration data.' });
+    }
+
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({
+        error: 'Password must be 10-128 chars and include uppercase, lowercase, digit and special symbol.'
+      });
+    }
+
+    if (!createdByAdmin && !SELF_REGISTER_ALLOWED_ROLES.has(requestedRole)) {
+      return res.status(403).json({ error: 'Self-registration for this role is disabled.' });
+    }
+
+    const finalRole = requestedRole;
+    const incomingClassId = class_id ? String(class_id).trim() : null;
+
+    if (incomingClassId && !['student', 'teacher'].includes(finalRole)) {
+      return res.status(400).json({ error: 'class_id can only be set for student or teacher roles.' });
     }
 
     // If class_id provided for student/teacher ensure it exists
-    const incomingClassId = class_id || null;
     if (incomingClassId) {
       const classRow = await new Promise((resolve) => db.get('SELECT id FROM classes WHERE id = ?', [incomingClassId], (e, r) => resolve({ err: e, row: r })));
       if (!classRow || !classRow.row) {
@@ -573,12 +1094,12 @@ app.post('/api/auth/register', async (req, res) => {
 
     db.run(
       'INSERT INTO users (id, username, password, name, role, class_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [id, cleanUsername, hashedPassword, cleanName, role || 'student', incomingClassId],
+      [id, cleanUsername, hashedPassword, cleanName, finalRole, incomingClassId],
       (err) => {
         if (err) {
           return res.status(400).json({ error: 'Користувач уже існує' });
         }
-        logAudit(id, 'register', req, { username: cleanUsername });
+        logAudit(id, 'register', req, { username: cleanUsername, role: finalRole, createdByAdmin });
         res.json({ success: true, message: 'Реєстрація успішна', userId: id });
       }
     );
@@ -589,19 +1110,19 @@ app.post('/api/auth/register', async (req, res) => {
 
 // Logout (revoke refresh token)
 app.post('/api/auth/logout', authenticateToken, (req, res) => {
-  const token = req.cookies && req.cookies.refreshToken;
+  const token = req.cookies && req.cookies[REFRESH_COOKIE_NAME];
   if (token) {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     db.run('DELETE FROM refresh_tokens WHERE token = ?', [tokenHash]);
   }
-  res.clearCookie('refreshToken');
+  res.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieClearOptions());
   logAudit(req.user?.id, 'logout', req, null);
   res.json({ success: true });
 });
 
 // Refresh access token using httpOnly refresh token cookie (with rotation)
 app.post('/api/auth/refresh', (req, res) => {
-  const token = req.cookies && req.cookies.refreshToken;
+  const token = req.cookies && req.cookies[REFRESH_COOKIE_NAME];
   if (!token) return res.status(401).json({ error: 'Refresh token not found' });
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
@@ -617,13 +1138,8 @@ app.post('/api/auth/refresh', (req, res) => {
       // rotate: delete old token and create new one
       db.run('DELETE FROM refresh_tokens WHERE id = ?', [row.id], (delErr) => {
         const { token: newRefreshPlain, expiresAt } = createRefreshToken(user.id);
-        const cookieOptions = {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'Strict',
-          maxAge: 7 * 24 * 60 * 60 * 1000
-        };
-        res.cookie('refreshToken', newRefreshPlain, cookieOptions);
+        const cookieOptions = getRefreshCookieOptions();
+        res.cookie(REFRESH_COOKIE_NAME, newRefreshPlain, cookieOptions);
         const accessToken = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '15m' });
         logAudit(user.id, 'token_refreshed', req, null);
         res.json({ token: accessToken, expiresAt });
@@ -633,11 +1149,12 @@ app.post('/api/auth/refresh', (req, res) => {
 });
 
 // Вхід
-app.post('/api/auth/login', (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
+app.post('/api/auth/login', loginValidationRules, (req, res) => {
+  if (handleValidationErrors(req, res)) return;
 
-  const cleanUsername = String(username).trim().toLowerCase();
+  const { username, password } = req.body || {};
+
+  const cleanUsername = sanitizeUsername(username);
 
   // Simple reliable login: find user and compare password
   db.get('SELECT * FROM users WHERE lower(username) = ? OR username = ?', [cleanUsername, username], async (err, user) => {
@@ -648,7 +1165,7 @@ app.post('/api/auth/login', (req, res) => {
 
     if (!user) {
       logAudit(null, 'login_failed', req, { username: cleanUsername });
-      return res.status(401).json({ error: 'Невірне ім\'я користувача або пароль' });
+      return respondAuthFailure(res);
     }
 
     // Check account lockout
@@ -677,23 +1194,16 @@ app.post('/api/auth/login', (req, res) => {
           }
         });
         logAudit(user.id, 'login_failed', req, { username: user.username });
-        return res.status(401).json({ error: 'Невірне ім\'я користувача або пароль' });
+        return respondAuthFailure(res);
       }
 
       // Issue short-lived access token
       const accessToken = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '15m' });
       // create refresh token and set as httpOnly cookie
       const { token: refreshPlain, expiresAt } = createRefreshToken(user.id);
-      const isProduction = process.env.NODE_ENV === 'production';
-      const cookieOptions = {
-        httpOnly: true,
-        secure: isProduction, // Only use secure in production (https)
-        sameSite: isProduction ? 'Strict' : 'Lax', // Use 'Lax' in development for mobile access
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-        path: '/' // Explicit path
-      };
-      console.log(`🍪 Setting refresh cookie. isProduction=${isProduction}, sameSite=${cookieOptions.sameSite}`);
-      res.cookie('refreshToken', refreshPlain, cookieOptions);
+      const cookieOptions = getRefreshCookieOptions();
+      console.log(`🍪 Setting refresh cookie. isProduction=${IS_PRODUCTION}, sameSite=${cookieOptions.sameSite}`);
+      res.cookie(REFRESH_COOKIE_NAME, refreshPlain, cookieOptions);
       // reset failed attempts on successful login
       db.run('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?', [user.id]);
       logAudit(user.id, 'login_success', req, { username: user.username });
@@ -845,7 +1355,30 @@ app.get('/api/metrics', authenticateToken, async (req, res) => {
 
 // Health endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+  const pressure = getRuntimePressure();
+  const overloadReason = getOverloadReason();
+  res.json({
+    status: overloadReason ? 'degraded' : 'ok',
+    overloaded: Boolean(overloadReason),
+    overloadReason,
+    limits: {
+      maxConcurrentRequests: MAX_CONCURRENT_REQUESTS,
+      maxHeapUsedMb: MAX_HEAP_USED_MB,
+      maxEventLoopP99LagMs: MAX_EVENT_LOOP_P99_LAG_MS
+    },
+    runtime: pressure,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Readiness endpoint: returns 503 while overloaded so upstream can drain traffic.
+app.get('/api/ready', (req, res) => {
+  const overloadReason = getOverloadReason();
+  if (overloadReason) {
+    return res.status(503).json({ ready: false, overloadReason, timestamp: new Date().toISOString() });
+  }
+  return res.json({ ready: true, timestamp: new Date().toISOString() });
 });
 
 // Видати талон конкретному користувачу (1 раз на день, 1 використання)
@@ -1022,7 +1555,8 @@ app.get('/api/vouchers/check/:qrCode', (req, res) => {
 
       res.json({
         ...voucher,
-        usedToday: !!usage,
+        // Treat fully-used vouchers as "used" for scanner UI compatibility.
+        usedToday: !!usage || isExhausted,
         isExpired,
         isExhausted,
         usesRemaining: Math.max(0, voucher.max_uses - voucher.current_uses),
@@ -1089,7 +1623,7 @@ app.post('/api/vouchers/use', authenticateToken, (req, res) => {
 
         // Перевірити, чи залишилися використання
         if (voucher.current_uses >= voucher.max_uses) {
-          return res.status(400).json({ error: `Талон вичерпаний (використано ${voucher.current_uses}/${voucher.max_uses})` });
+          return res.status(400).json({ error: `Талон вже використаний (${voucher.current_uses}/${voucher.max_uses})` });
         }
 
         const usageId = uuidv4();
@@ -1107,11 +1641,22 @@ app.post('/api/vouchers/use', authenticateToken, (req, res) => {
                 // Fetch updated voucher data to return current state
                 db.get('SELECT * FROM vouchers WHERE id = ?', [voucher.id], (fetchErr, updatedVoucher) => {
                   if (fetchErr || !updatedVoucher) {
+                    const nextUses = Number(voucher.current_uses || 0) + 1;
+                    const maxUses = Number(voucher.max_uses || 1);
                     return res.json({ 
                       success: true, 
                       message: 'Талон позначено як використаний', 
                       voucher: voucher.student_name,
-                      usesRemaining: Math.max(0, voucher.max_uses - voucher.current_uses - 1)
+                      usesRemaining: Math.max(0, maxUses - nextUses),
+                      updatedVoucher: {
+                        ...voucher,
+                        current_uses: nextUses,
+                        usedToday: true,
+                        isUsed: nextUses >= maxUses,
+                        isExhausted: nextUses >= maxUses,
+                        isExpired: true,
+                        expiresAt: null
+                      }
                     });
                   }
 
@@ -1137,7 +1682,9 @@ app.post('/api/vouchers/use', authenticateToken, (req, res) => {
                     usesRemaining: Math.max(0, updatedVoucher.max_uses - updatedVoucher.current_uses),
                     updatedVoucher: {
                       ...updatedVoucher,
+                      usedToday: true,
                       isUsed,
+                      isExhausted: isUsed,
                       isExpired,
                       expiresAt: expiresAt ? expiresAt.toISOString() : null
                     }
@@ -1230,10 +1777,13 @@ app.get('/api/vouchers/user/:userId', authenticateToken, (req, res) => {
             resolve(!!usageRow);
           });
         });
-        // Compute expiration: if issued_at exists, expire after 9 hours from issuance
+        const isUsed = (v.current_uses || 0) >= (v.max_uses || 1);
+        // Compute expiration: used vouchers are always treated as not active.
         let isExpired = false;
         let expiresAt = null;
-        if (v.issued_at) {
+        if (isUsed) {
+          isExpired = true;
+        } else if (v.issued_at) {
           try {
             const issuedDt = new Date(v.issued_at);
             expiresAt = new Date(issuedDt.getTime() + 9 * 60 * 60 * 1000);
@@ -1244,9 +1794,17 @@ app.get('/api/vouchers/user/:userId', authenticateToken, (req, res) => {
         } else {
           isExpired = !!(v.expires_date && v.expires_date < today);
         }
-        const isUsed = (v.current_uses || 0) >= (v.max_uses || 1);
         const usesRemaining = Math.max(0, (v.max_uses || 1) - (v.current_uses || 0));
-        return { ...v, qrImage, usedToday, isExpired, isUsed, usesRemaining, expiresAt: expiresAt ? expiresAt.toISOString() : null };
+        return {
+          ...v,
+          qrImage,
+          usedToday: usedToday || isUsed,
+          isExpired,
+          isUsed,
+          isExhausted: isUsed,
+          usesRemaining,
+          expiresAt: expiresAt ? expiresAt.toISOString() : null
+        };
       }));
       res.json(withComputed);
     } catch (e) {
@@ -1332,10 +1890,15 @@ function cleanupOldVouchers() {
 setImmediate(() => {
   try { cleanupOldVouchers(); } catch (e) { console.error('❌ Initial cleanup error', e); }
   try { markExpiredVouchersAsUsed(); } catch (e) { console.error('❌ Initial expiration check error', e); }
+  try { cleanupExpiredRefreshTokens(); } catch (e) { console.error('❌ Initial refresh token cleanup error', e); }
 });
 setInterval(() => {
   cleanupOldVouchers();
 }, CLEANUP_INTERVAL_MS);
+
+setInterval(() => {
+  cleanupExpiredRefreshTokens();
+}, 60 * 60 * 1000);
 
 // Run expiration check every 5 minutes
 setInterval(() => {
@@ -2396,10 +2959,23 @@ app.use((err, req, res, next) => {
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n✅ SERVER RUNNING: http://localhost:${PORT}`);
   console.log(`   Health check: http://localhost:${PORT}/api/health`);
+  console.log(`   Readiness check: http://localhost:${PORT}/api/ready`);
   console.log(`   Login: POST http://localhost:${PORT}/api/auth/login\n`);
 });
 
 // Keep server alive and handle shutdown
+server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
+server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
+server.requestTimeout = SERVER_REQUEST_TIMEOUT_MS;
+server.maxConnections = SERVER_MAX_CONNECTIONS;
+
+server.on('connection', (socket) => {
+  socket.setTimeout(SERVER_SOCKET_TIMEOUT_MS);
+  socket.on('timeout', () => {
+    socket.destroy();
+  });
+});
+
 server.on('error', (err) => {
   console.error('Server error:', err);
   process.exit(1);
@@ -2517,14 +3093,42 @@ const voucherDistributionInterval = setInterval(() => {
 // Also check on startup if it's 9:15 AM
 console.log(`⏰ Automatic voucher distribution scheduler started (checks at 9:15 AM Kyiv time)`);
 
-process.on('SIGINT', () => {
-  console.log('\nShutting down gracefully...');
+let isShuttingDown = false;
+function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\n${signal} received. Shutting down gracefully...`);
   clearInterval(voucherDistributionInterval);
-  db.close((err) => {
-    if (err) console.error('DB close error:', err);
-    process.exit(0);
+  try { eventLoopDelayMonitor.disable(); } catch (e) {}
+
+  const forceExitTimer = setTimeout(() => {
+    console.error('⚠️ Forced shutdown after timeout');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  if (typeof forceExitTimer.unref === 'function') {
+    forceExitTimer.unref();
+  }
+
+  const finishExit = (code = 0) => {
+    clearTimeout(forceExitTimer);
+    process.exit(code);
+  };
+
+  server.close(() => {
+    db.close((err) => {
+      if (err) console.error('DB close error:', err);
+      if (redis) {
+        redis.quit().catch(() => {}).finally(() => finishExit(0));
+        return;
+      }
+      finishExit(0);
+    });
   });
-});
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Export Redis instance for db-cache
 module.exports = { redis, db };

@@ -32,11 +32,14 @@
   padding: 0;
   border-radius: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
   flex-wrap: nowrap;
   box-shadow: none;
   position: relative;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  width: 100%;
 }
 
 .tab-button {
@@ -56,6 +59,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .tab-button:hover:not(.active) {
@@ -278,6 +282,41 @@
 .filters-item {
   flex: 1 1 260px;
   min-width: 0;
+}
+
+.users-toolbar {
+  margin-bottom: 10px;
+}
+
+.users-search-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+}
+
+.users-search-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #111827;
+  background-color: #ffffff;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.users-search-input:focus {
+  outline: none;
+  border-color: #5b6dff;
+  box-shadow: 0 0 0 3px rgba(91, 109, 255, 0.16);
+}
+
+.users-summary-text {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
 }
 
 .stats-table {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import apiClient from '../api/client.js';
-import { useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import './Auth.css';
 
 function Login({ onLogin }) {
@@ -9,6 +9,8 @@ function Login({ onLogin }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const notice = location.state?.notice || '';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -42,14 +44,18 @@ function Login({ onLogin }) {
           <p className="login-brand-line">шкільними талонами</p>
         </div>
 
-        <h2 className="login-title">Вхід в систему</h2>
+        <h2 className="login-title">Вхід до системи</h2>
 
         {error && (
           <div className="alert alert-error">
             <strong>Помилка:</strong> {error}
           </div>
         )}
-
+        {notice && (
+          <div className="alert alert-info">
+            {notice}
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="login-form">
           <label className="sr-only" htmlFor="login-username">Ім'я користувача</label>
           <input
@@ -84,7 +90,7 @@ function Login({ onLogin }) {
         </form>
 
         <p className="auth-link login-link">
-          Немаєте акаунту? <a href="/register">Зареєструватися тут</a>
+          Ще не маєте акаунта? <Link to="/register">Зареєструватися тут</Link>
         </p>
       </div>
     </div>

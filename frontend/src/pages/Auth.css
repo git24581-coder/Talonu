@@ -152,6 +152,12 @@
   border-left: 4px solid #ef4444;
 }
 
+.auth-card .alert.alert-info {
+  background-color: #0f172a;
+  color: #bfdbfe;
+  border-left: 4px solid #3b82f6;
+}
+
 .auth-link {
   text-align: center;
   margin-top: 24px;

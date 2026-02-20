@@ -1,0 +1,504 @@
+TALONU / SCHOOL VOUCHERS SYSTEM
+Детальний технічний опис проєкту для співбесіди
+Дата: 20.02.2026
+
+==================================================
+1) ЩО ЦЕ ЗА ПРОЄКТ
+==================================================
+
+Це fullstack-система для обліку шкільних талонів на харчування.
+Ключова ідея:
+- вчитель відмічає присутність учнів;
+- система видає талони присутнім;
+- учень показує QR-код талона;
+- касир/адмін сканує і списує талон;
+- адміністратор керує користувачами, класами, налаштуваннями, статистикою.
+
+Проєкт орієнтований на ролі:
+- admin
+- teacher
+- student
+- cashier
+
+
+==================================================
+2) АРХІТЕКТУРА
+==================================================
+
+Тип архітектури:
+- практичний моноліт (Node.js backend + React frontend в одному репозиторії).
+
+Структура:
+- backend/
+  - Express API
+  - бізнес-логіка талонів, ролей, присутності
+  - робота з SQLite/PostgreSQL
+  - кеші, метрики, rate limit, health/readiness
+- frontend/
+  - React SPA
+  - role-based дашборди
+  - робота з API через axios
+
+Роутинг frontend:
+- використовується HashRouter, щоб стабільно працювало на static hosting.
+
+Роутинг backend:
+- API маршрути починаються з /api/...
+- якщо є frontend build, backend роздає статичні файли frontend.
+
+
+==================================================
+3) ТЕХНОЛОГІЧНИЙ СТЕК
+==================================================
+
+Backend:
+- Node.js
+- Express
+- bcrypt (хешування паролів)
+- jsonwebtoken (JWT)
+- cookie-parser
+- cors
+- helmet
+- express-rate-limit
+- sqlite3
+- pg (PostgreSQL)
+- uuid
+- qrcode
+- compression
+- prom-client (Prometheus метрики)
+- ioredis + bullmq (опціонально)
+
+Frontend:
+- React 18
+- react-router-dom
+- axios
+- jsQR (розпізнавання QR через камеру)
+- react-scripts (build/dev)
+
+Інструменти запуску:
+- START.ps1
+- START.bat
+- PM2 (кластерний запуск у production-сценарії)
+
+
+==================================================
+4) ОСНОВНІ БІЗНЕС-СЦЕНАРІЇ
+==================================================
+
+4.1 Вхід/сесія:
+- користувач логіниться через username/password;
+- отримує access token (JWT, короткий TTL);
+- refresh token кладеться в httpOnly cookie;
+- при необхідності access token оновлюється через /api/auth/refresh.
+
+4.2 Реєстрація:
+- новий користувач реєструється через /api/auth/register;
+- може бути призначений class_id (для student/teacher).
+
+4.3 Присутність (attendance):
+- teacher або admin/cashier відмічає присутніх учнів;
+- на позначення "present" система створює талон (якщо ще немає на сьогодні).
+
+4.4 Талони:
+- талон має QR-код, owner, дату видачі, кількість використань;
+- зазвичай max_uses = 1;
+- талон можна перевірити по QR: /api/vouchers/check/:qrCode;
+- касир або адмін списує талон: /api/vouchers/use.
+
+4.5 Автоматична видача:
+- фоновий scheduler кожну хвилину перевіряє час;
+- о 09:15 (Europe/Kyiv) запускається масова видача талонів присутнім.
+
+4.6 Адмін-панель:
+- керування класами;
+- перегляд всіх талонів і статистики;
+- системні налаштування (конфіг) з backup/restore/reset.
+
+
+==================================================
+5) РОЛІ ТА ДОСТУПИ
+==================================================
+
+admin:
+- повний доступ до користувачів, класів, талонів, статистики, конфігу.
+
+teacher:
+- доступ до свого класу;
+- виставлення attendance;
+- перегляд обліку attendance.
+
+student:
+- перегляд свого attendance;
+- перегляд своїх талонів і QR-кодів.
+
+cashier:
+- сканування талонів;
+- списання талонів.
+
+Контроль доступу реалізований перевірками req.user.role в backend endpoints.
+
+
+==================================================
+6) БАЗА ДАНИХ
+==================================================
+
+6.1 Підтримувані СУБД:
+- SQLite (за замовчуванням, локально)
+- PostgreSQL (якщо задано DATABASE_URL з префіксом postgres)
+
+6.2 Таблиці:
+
+users:
+- id (PK)
+- username (unique)
+- password (bcrypt hash)
+- email
+- role
+- name
+- class_id
+- failed_attempts
+- locked_until
+- created_at
+
+vouchers:
+- id (PK)
+- qr_code (unique)
+- user_id (FK -> users)
+- student_name
+- created_date
+- expires_date
+- issued_at
+- max_uses
+- current_uses
+- status
+- created_at
+- унікальність: (user_id, created_date)
+
+voucher_usage:
+- id (PK)
+- voucher_id (FK -> vouchers)
+- used_date
+- used_time
+- cashier_id (FK -> users)
+- created_at
+
+classes:
+- id (PK)
+- name (unique)
+- teacher_id (FK -> users)
+- created_at
+
+attendance:
+- id (PK)
+- student_id (FK -> users)
+- class_id (FK -> classes)
+- attendance_date
+- lesson_number
+- status
+- comment
+- created_at
+
+audit_logs:
+- id (PK)
+- user_id
+- action
+- ip
+- user_agent
+- details
+- created_at
+
+refresh_tokens:
+- id (PK)
+- user_id (FK -> users)
+- token (в БД зберігається hash)
+- expires_at
+- created_at
+
+config:
+- id (PK)
+- key (unique)
+- value
+- type
+- updated_at
+- updated_by
+- description
+
+6.3 Індекси:
+- індекси на users.username, users.role
+- на vouchers.user_id, vouchers.created_date, vouchers.status
+- на attendance.student_id, attendance.date
+- на voucher_usage.voucher_id, voucher_usage.used_date
+- додаткові індекси залежать від engine/schema initialization
+
+
+==================================================
+7) AUTH + SECURITY
+==================================================
+
+7.1 Аутентифікація:
+- JWT access token (15 хв)
+- refresh token у httpOnly cookie (~7 днів)
+- refresh token rotation на /api/auth/refresh
+- logout видаляє refresh token з БД і cookie
+
+7.2 Паролі:
+- bcrypt hash
+- кількість rounds конфігурується через BCRYPT_ROUNDS
+
+7.3 Захист від brute force:
+- failed_attempts
+- lock акаунта після MAX_LOGIN_ATTEMPTS
+- LOCK_MINUTES для тривалості блокування
+
+7.4 HTTP-захист:
+- CORS (у production дозволені конкретні origin через CORS_ORIGINS)
+- Helmet у production
+- body size limit
+- max URL length limit
+- rate limit (загальний API, auth, heavy endpoints)
+
+7.5 Audit:
+- ключові дії логуються в audit_logs
+
+
+==================================================
+8) НАВАНТАЖЕННЯ, СТАБІЛЬНІСТЬ, ВІДМОВОСТІЙКІСТЬ
+==================================================
+
+Реалізовано:
+- контроль concurrent requests
+- контроль heap usage
+- контроль event loop lag
+- overload gate: повертає 503 при перевантаженні
+- request/socket/server timeouts
+- compression для зменшення трафіку
+- health endpoint: /api/health
+- readiness endpoint: /api/ready
+- graceful shutdown по SIGINT/SIGTERM
+
+Кешування:
+- in-memory кеш
+- Redis fallback (якщо налаштований REDIS_URL)
+- кеш QR-картинок (щоб не генерувати щоразу)
+
+Метрики:
+- /metrics (Prometheus формат)
+- /api/metrics (admin-only агреговані метрики)
+
+
+==================================================
+9) FRONTEND ЛОГІКА
+==================================================
+
+9.1 Авторизація:
+- token і user зберігаються в localStorage
+- axios request interceptor додає Authorization: Bearer ...
+- axios response interceptor при 401 очищає localStorage і редіректить на login
+
+9.2 API base URL:
+- локально: http(s)://<local-host>:3000
+- у production може братись з REACT_APP_API_URL
+
+9.3 Дашборди:
+- StudentDashboard: attendance + vouchers + QR
+- TeacherDashboard: attendance контроль класу
+- CashierDashboard: QR scanner і списання
+- AdminDashboard: users/classes/vouchers/stats/settings
+- AdminSettings: робота з конфігом через backend API
+
+
+==================================================
+10) ОСНОВНІ API ENDPOINTS (СКОРОЧЕНИЙ КАТАЛОГ)
+==================================================
+
+Auth:
+- POST /api/auth/register
+- POST /api/auth/login
+- POST /api/auth/logout
+- POST /api/auth/refresh
+
+Users/Attendance:
+- GET  /api/users
+- GET  /api/users/attendance
+- POST /api/users/attendance/set
+- POST /api/users/attendance/unset
+- POST /api/users/attendance/clear-all
+- PUT  /api/users/:id/class
+
+Vouchers:
+- GET  /api/vouchers/my
+- POST /api/vouchers/distribute
+- POST /api/vouchers/distribute-all
+- POST /api/vouchers/create
+- GET  /api/vouchers/check/:qrCode
+- POST /api/vouchers/use
+- GET  /api/vouchers/all
+- GET  /api/vouchers/user/:userId
+- DELETE /api/vouchers/:id
+
+Classes:
+- POST /api/classes
+- GET  /api/classes
+- GET  /api/classes/public
+- GET  /api/classes/:id
+- PUT  /api/classes/:id/teacher
+- POST /api/classes/:id/students
+- DELETE /api/classes/:id/students/:student_id
+- DELETE /api/classes/:id
+
+Teacher/Student:
+- GET /api/teacher/my-classes
+- GET /api/teachers/my-students
+- GET /api/student/me/attendance
+- GET /api/student/me/attendance-summary
+
+Admin config:
+- GET  /api/admin/config
+- POST /api/admin/config/bulk-update
+- GET  /api/admin/config/:key
+- POST /api/admin/config/:key
+- GET  /api/admin/all-config
+- GET  /api/admin/config/backup/download
+- POST /api/admin/config/restore
+- POST /api/admin/config/reset-to-defaults
+
+Service:
+- GET /api/health
+- GET /api/ready
+- GET /metrics
+
+
+==================================================
+11) КОНФІГУРАЦІЯ ЧЕРЕЗ ENV
+==================================================
+
+Ключові змінні:
+- NODE_ENV
+- PORT
+- JWT_SECRET
+- DATABASE_URL
+- BCRYPT_ROUNDS
+- VOUCHER_EXPIRY_HOURS
+- MAX_LOGIN_ATTEMPTS
+- LOCK_MINUTES
+- CORS_ORIGINS
+- REDIS_URL
+
+Для навантаження:
+- MAX_CONCURRENT_REQUESTS
+- API_RATE_LIMIT_WINDOW_MS / API_RATE_LIMIT_MAX
+- AUTH_RATE_LIMIT_WINDOW_MS / AUTH_RATE_LIMIT_MAX
+- HEAVY_RATE_LIMIT_WINDOW_MS / HEAVY_RATE_LIMIT_MAX
+- MAX_HEAP_USED_MB
+- MAX_EVENT_LOOP_P99_LAG_MS
+- JSON_BODY_LIMIT
+- URLENCODED_BODY_LIMIT
+- SERVER_* timeout/limits
+- SQLITE_* performance PRAGMA (для SQLite)
+
+
+==================================================
+12) РОЗГОРТАННЯ
+==================================================
+
+Локально:
+- запуск через START.ps1 або START.bat
+- backend на 3000
+- frontend може обслуговуватись backend-ом із build папки
+
+Production-варіант:
+- Backend як Web Service (наприклад Render)
+- Frontend як Static Site (Render/GitHub Pages)
+- CORS_ORIGINS обов'язково налаштувати на домен frontend
+- REACT_APP_API_URL вказати на backend URL
+
+PM2:
+- є ecosystem.config.js
+- можливий кластерний запуск (instances configurable)
+
+
+==================================================
+13) МОНИТОРИНГ ТА ЛОГИ
+==================================================
+
+- access logs у backend/logs/app.log
+- метрики через /metrics
+- health/readiness для інтеграції з reverse proxy/LB
+- audit trail в audit_logs
+
+
+==================================================
+14) ВІДОМІ ОБМЕЖЕННЯ / ТЕХНІЧНИЙ БОРГ
+==================================================
+
+1) Є npm scripts, що посилаються на файли, яких зараз немає:
+- worker:distribute -> workers/distributeWorker.js
+- backup -> scripts/backup.js
+
+2) Реєстрація приймає role з body.
+Для production краще обмежити дозволені ролі або реєструвати тільки student.
+
+3) access token зберігається у localStorage.
+Це зручно, але менш безпечно, ніж повністю cookie-based схема.
+
+4) Автотести мінімальні (є тільки допоміжний test-demo-users.js).
+Потрібні unit/integration/e2e тести.
+
+5) У проєкті є проблеми кодування (mojibake) в частині текстів/доків.
+Потрібна уніфікація UTF-8 без BOM + ревізія UI-копірайту.
+
+
+==================================================
+15) ЩО КАЗАТИ НА СПІВБЕСІДІ (ГОТОВІ ФОРМУЛЮВАННЯ)
+==================================================
+
+Про архітектуру:
+"Це монолітний fullstack-проєкт: React-клієнт і Express API в одному репо. 
+Backend може обслуговувати frontend build, а також працювати окремо."
+
+Про БД:
+"У development я використовую SQLite для простого старту, у production переключаюсь на PostgreSQL через DATABASE_URL. 
+Я зробив обгортку доступу до БД, щоб бізнес-логіка не залежала від конкретного engine."
+
+Про безпеку:
+"Паролі хешуються bcrypt, auth на JWT + refresh token rotation в httpOnly cookie, 
+є lockout на невдалі логіни, CORS, rate limiting і рольовий доступ на endpoint рівні."
+
+Про навантаження:
+"Додав контроль перевантаження по concurrent requests, heap та event loop lag, 
+health/readiness endpoints, таймаути на сервері і кешування гарячих даних/QR."
+
+Про бізнес-цінність:
+"Система покриває повний цикл шкільного талона: attendance -> видача -> QR-сканування -> списання -> аналітика."
+
+Про покращення:
+"Перші кроки: повний тестовий контур, посилення політики реєстрації ролей, 
+уніфікація кодувань і централізація текстових ресурсів."
+
+
+==================================================
+16) ШВИДКА ШПАРГАЛКА (1 ХВИЛИНА)
+==================================================
+
+- Проєкт: система шкільних талонів з 4 ролями.
+- Стек: React + Node/Express + SQLite/PostgreSQL.
+- Головний флоу: вчитель позначає присутніх -> талон -> QR -> касир списує.
+- Security: JWT + refresh cookie, bcrypt, RBAC, rate limit.
+- Reliability: health/readiness, overload control, timeout-и, кеш.
+- Admin: керування класами/користувачами/налаштуваннями/статистикою.
+- Production: frontend static, backend web service, CORS + REACT_APP_API_URL.
+
+
+==================================================
+17) ВИСНОВОК
+==================================================
+
+Це робочий приклад прикладної шкільної системи з реальними бізнес-сценаріями,
+де присутні:
+- рольова модель,
+- повний життєвий цикл сутності "талон",
+- базові production-практики безпеки та надійності,
+- адміністративний контур із конфігурацією і резервуванням.
+
+Проєкт придатний як strong junior / middle-level кейс для співбесіди,
+особливо якщо додати повний тестовий контур і закрити технічний борг по скриптах/кодуваннях.

@@ -131,7 +131,7 @@ function StudentDashboard() {
             <button 
               className={`tab-button ${activeTab === 'vouchers' ? 'active' : ''}`}
               onClick={() => setActiveTab('vouchers')}
-              title="Переглянути ваші талони на їжу з QR кодами"
+              title="Переглянути ваші талони на їжу з QR-кодами"
             >
               🎫 Мої талони ({vouchers.length})
             </button>
@@ -210,11 +210,11 @@ function StudentDashboard() {
                 fontSize: '13px',
                 color: '#004085'
               }}>
-                💡 <strong>Як використати талон:</strong>
+                💡 <strong>Як використовувати талон:</strong>
                 <ol style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
-                  <li>Натисніть на талон нижче, щоб показати QR код</li>
-                  <li>Покажіть QR код касирові на касі</li>
-                  <li>Касир відскануватиме ваш код камерою</li>
+                  <li>Натисніть на талон нижче, щоб показати QR-код</li>
+                  <li>Покажіть QR-код касирові на касі</li>
+                  <li>Касир відсканує ваш QR-код камерою</li>
                   <li>✓ Готово! Вам буде видано їжу</li>
                 </ol>
               </div>
@@ -222,7 +222,7 @@ function StudentDashboard() {
               {vouchers.length === 0 ? (
                 <div className="card">
                   <div className="alert alert-info">
-                    📭 У вас немає талонів. Талони видаються автоматично о 9:15 ранку
+                    📭 У вас немає талонів. Талони видаються автоматично о 09:15
                   </div>
                 </div>
               ) : (
@@ -241,13 +241,13 @@ function StudentDashboard() {
                     const isExpiredVoucher = !isUsedVoucher && (isExpiredByTime || Boolean(voucher.isExpired));
                     const isInactiveVoucher = isUsedVoucher || isExpiredVoucher;
 
-                    let voucherStatusText = '\u2705 \u0410\u043a\u0442\u0438\u0432\u043d\u0438\u0439';
+                    let voucherStatusText = '✅ Активний';
                     if (isUsedVoucher) {
-                      voucherStatusText = '\u2705 \u0412\u0438\u043a\u043e\u0440\u0438\u0441\u0442\u0430\u043d\u043e';
+                      voucherStatusText = '✅ Використано';
                     } else if (isExpiredByTime) {
-                      voucherStatusText = `\u23F0 \u0412\u0438\u0447\u0435\u0440\u043f\u0430\u043d\u043e \u0447\u0430\u0441 \u0434\u0456\u0457 (${VOUCHER_EXPIRY_HOURS} \u0433\u043e\u0434)`;
+                      voucherStatusText = `⏰ Строк дії минув (${VOUCHER_EXPIRY_HOURS} год)`;
                     } else if (isExpiredVoucher) {
-                      voucherStatusText = '\u274C \u0422\u0435\u0440\u043c\u0456\u043d \u0434\u0456\u0457 \u0437\u0430\u043a\u0456\u043d\u0447\u0438\u0432\u0441\u044f';
+                      voucherStatusText = '❌ Строк дії минув';
                     }
 
                     return (
@@ -287,7 +287,7 @@ function StudentDashboard() {
                               display: 'block',
                               marginTop: '3px'
                             }}>
-                              {'\u23F0 \u0412\u0438\u0447\u0435\u0440\u043f\u0430\u043d\u043e \u0447\u0430\u0441 \u0434\u0456\u0457 \u0442\u0430\u043b\u043e\u043d\u0430'}
+                              ⏰ Строк дії талона минув
                             </small>
                           )}
                           <small style={{
@@ -302,7 +302,9 @@ function StudentDashboard() {
                           </small>
                         </div>
 
-                        <div style={{
+                        <div
+                          title="Натисніть, щоб показати або приховати QR-код. Касир відсканує цей код"
+                          style={{
                           marginTop: '15px',
                           marginBottom: '10px',
                           textAlign: 'center',
@@ -316,9 +318,10 @@ function StudentDashboard() {
                           justifyContent: 'center',
                           boxShadow: isEnlarged ? '0 10px 30px rgba(0,0,0,0.15)' : '0 2px 8px rgba(0,0,0,0.08)',
                           transform: isEnlarged ? (isCompactViewport ? 'scale(1.04)' : 'scale(1.3)') : 'scale(1)',
-                          minHeight: isEnlarged ? (isCompactViewport ? '300px' : '450px') : (isCompactViewport ? '200px' : '240px'),
-                          title: 'Натисніть для показання/приховування QR коду. Касир відскануватиме цей код'
-                        }} onClick={() => toggleQrState(voucher.id)}>
+                          minHeight: isEnlarged ? (isCompactViewport ? '300px' : '450px') : (isCompactViewport ? '200px' : '240px')
+                        }}
+                          onClick={() => toggleQrState(voucher.id)}
+                        >
                           {voucher.qrImage ? (
                             <div style={{
                               display: 'flex',
@@ -350,9 +353,9 @@ function StudentDashboard() {
                         </div>
 
                         <div style={{ fontSize: '12px', color: '#666', textAlign: 'center', padding: '10px', backgroundColor: '#f0f0f0', borderRadius: '4px' }}>
-                          {isBlurred && '👆 Натисни щоб показати'}
-                          {!isBlurred && isEnlarged && '👆 Натисни щоб прихопити'}
-                          {!isBlurred && !isEnlarged && '👆 Натисни щоб збільшити'}
+                          {isBlurred && '👆 Натисни, щоб показати'}
+                          {!isBlurred && isEnlarged && '👆 Натисни, щоб приховати'}
+                          {!isBlurred && !isEnlarged && '👆 Натисни, щоб збільшити'}
                         </div>
                       </div>
                     );

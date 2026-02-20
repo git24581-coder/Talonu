@@ -16,6 +16,7 @@ function AdminDashboard() {
   const [allVouchers, setAllVouchers] = useState([]);
   const [stats, setStats] = useState(null);
   const [searchName, setSearchName] = useState('');
+  const [usersSearchQuery, setUsersSearchQuery] = useState('');
   const [selectedClassFilter, setSelectedClassFilter] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [selectedStudentProfile, setSelectedStudentProfile] = useState(null);
@@ -44,6 +45,80 @@ function AdminDashboard() {
     if (minutesRemaining < 60) return `${minutesRemaining} хв`;
     const hoursRemaining = Math.round(minutesRemaining / 60);
     return `${hoursRemaining} год`;
+  };
+
+  const normalizeText = (value) => String(value || '').trim().toLowerCase();
+
+  const getClassNameById = (classId) => {
+    if (classId === null || classId === undefined || classId === '') return '-';
+    const classRow = (classesList || []).find((c) => String(c.id) === String(classId));
+    return classRow?.name || 'N/A';
+  };
+
+  const getClassSortMeta = (className) => {
+    const raw = String(className || '').trim();
+    if (!raw || raw === '-' || raw === 'N/A') {
+      return {
+        hasClass: false,
+        grade: Number.MAX_SAFE_INTEGER,
+        section: 'ZZZ',
+        raw: ''
+      };
+    }
+
+    const gradeMatch = raw.match(/\d+/);
+    const grade = gradeMatch ? Number(gradeMatch[0]) : Number.MAX_SAFE_INTEGER - 1;
+    const section = raw.replace(/\d+/g, '').replace(/[-_\s]/g, '').toUpperCase() || 'ZZZ';
+
+    return {
+      hasClass: true,
+      grade,
+      section,
+      raw: raw.toUpperCase()
+    };
+  };
+
+  const getRoleSortWeight = (role) => {
+    if (role === 'student') return 0;
+    if (role === 'teacher') return 2;
+    return 1;
+  };
+
+  const compareUsersForList = (a, b) => {
+    const roleWeightA = getRoleSortWeight(a.role);
+    const roleWeightB = getRoleSortWeight(b.role);
+    if (roleWeightA !== roleWeightB) return roleWeightA - roleWeightB;
+
+    if (roleWeightA === 0) {
+      const classMetaA = getClassSortMeta(getClassNameById(a.class_id));
+      const classMetaB = getClassSortMeta(getClassNameById(b.class_id));
+
+      if (classMetaA.hasClass !== classMetaB.hasClass) {
+        return classMetaA.hasClass ? -1 : 1;
+      }
+      if (classMetaA.grade !== classMetaB.grade) return classMetaA.grade - classMetaB.grade;
+
+      const sectionCompare = classMetaA.section.localeCompare(classMetaB.section, 'uk', {
+        sensitivity: 'base',
+        numeric: true
+      });
+      if (sectionCompare !== 0) return sectionCompare;
+
+      const rawClassCompare = classMetaA.raw.localeCompare(classMetaB.raw, 'uk', {
+        sensitivity: 'base',
+        numeric: true
+      });
+      if (rawClassCompare !== 0) return rawClassCompare;
+    }
+
+    const nameA = String(a.name || a.username || '').trim();
+    const nameB = String(b.name || b.username || '').trim();
+    const nameCompare = nameA.localeCompare(nameB, 'uk', { sensitivity: 'base' });
+    if (nameCompare !== 0) return nameCompare;
+
+    return String(a.username || '').localeCompare(String(b.username || ''), 'uk', {
+      sensitivity: 'base'
+    });
   };
 
   // Helper to make API calls using centralized apiClient
@@ -202,6 +277,20 @@ function AdminDashboard() {
     }
   };
 
+  const usersSearchTerm = normalizeText(usersSearchQuery);
+  const filteredAndSortedUsers = [...users]
+    .filter((user) => {
+      if (!usersSearchTerm) return true;
+      const className = normalizeText(getClassNameById(user.class_id));
+      return (
+        normalizeText(user.name).includes(usersSearchTerm) ||
+        normalizeText(user.username).includes(usersSearchTerm) ||
+        normalizeText(user.role).includes(usersSearchTerm) ||
+        className.includes(usersSearchTerm)
+      );
+    })
+    .sort(compareUsersForList);
+
   return (
     <div className="container">
 
@@ -222,14 +311,14 @@ function AdminDashboard() {
         <button 
           className={`tab-button ${activeTab === 'scan' ? 'active' : ''}`}
           onClick={() => setActiveTab('scan')}
-          title="Сканування та перевірка QR кодів талонів"
+          title="Сканування та перевірка QR-кодів талонів"
         >
           🔍 Сканування
         </button>
         <button 
           className={`tab-button ${activeTab === 'vouchers' ? 'active' : ''}`}
           onClick={() => setActiveTab('vouchers')}
-          title="Перегляд всіх видатих талонів"
+          title="Перегляд усіх виданих талонів"
         >
           🎫 Всі талони
         </button>
@@ -276,11 +365,30 @@ function AdminDashboard() {
                   ✗ Очистити всіх від присутності
                 </button>
               </div>
+              <div className="filters-row users-toolbar">
+                <div className="filters-item">
+                  <label className="users-search-label">
+                    🔍 Пошук користувача
+                  </label>
+                  <input
+                    type="text"
+                    className="users-search-input"
+                    value={usersSearchQuery}
+                    onChange={(e) => setUsersSearchQuery(e.target.value)}
+                    placeholder="Пошук за ім'ям, username, роллю або класом"
+                  />
+                </div>
+              </div>
+              <p className="users-summary-text">
+                Показано: {filteredAndSortedUsers.length} з {users.length}
+              </p>
             </div>
             {loading ? (
               <div className="loading">Завантаження...</div>
             ) : users.length === 0 ? (
               <div className="alert alert-info">Користувачів не знайдено</div>
+            ) : filteredAndSortedUsers.length === 0 ? (
+              <div className="alert alert-info">За запитом користувачів не знайдено</div>
             ) : (
               <div className="responsive-table-wrap">
                 <table className="users-table" style={{ width: '100%', borderCollapse: 'collapse', boxSizing: 'border-box' }}>
@@ -295,8 +403,8 @@ function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {users.map(user => (
-                      <tr key={user.id} style={{ borderBottom: '1px solid #eee', backgroundColor: user.present ? '#f0f8ff' : '#fff' }}>
+                    {filteredAndSortedUsers.map(user => (
+                      <tr key={user.id} style={{ borderBottom: '1px solid #eee', backgroundColor: user.role === 'student' && user.present ? '#f0f8ff' : '#fff' }}>
                         <td style={{ padding: '10px' }}>{user.name || '-'}</td>
                         <td style={{ padding: '10px' }}>{user.username}</td>
                         <td style={{ padding: '10px' }}>
@@ -310,32 +418,36 @@ function AdminDashboard() {
                             {user.role === 'student' ? '👨‍🎓 Учень' : user.role === 'teacher' ? '👨‍🏫 Вчитель' : 'Касир'}
                           </span>
                         </td>
-                        <td style={{ padding: '10px' }}>{user.class_id ? classesList?.find(c => c.id === user.class_id)?.name || 'N/A' : '-'}</td>
+                        <td style={{ padding: '10px' }}>{getClassNameById(user.class_id)}</td>
                         <td style={{ padding: '10px', textAlign: 'center' }}>
-                          <span style={{
-                            padding: '3px 8px',
-                            borderRadius: '3px',
-                            fontSize: '12px',
-                            fontWeight: 'bold',
-                            backgroundColor: user.present ? '#c8e6c9' : '#ffcccc',
-                            color: user.present ? '#2e7d32' : '#c62828',
-                            cursor: 'pointer'
-                          }} title="Клік для зміни статусу" onClick={async () => {
-                            try {
+                          {user.role === 'student' ? (
+                            <span style={{
+                              padding: '3px 8px',
+                              borderRadius: '3px',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                              backgroundColor: user.present ? '#c8e6c9' : '#ffcccc',
+                              color: user.present ? '#2e7d32' : '#c62828',
+                              cursor: 'pointer'
+                            }} title="Натисніть, щоб змінити статус" onClick={async () => {
+                              try {
                                 if (user.present) {
-                                await apiCall('POST', '/api/users/attendance/unset', { userIds: [user.id] });
-                                setMessage({ type: 'success', text: `Присутність знята для ${user.name || user.username}` });
-                              } else {
-                                await apiCall('POST', '/api/users/attendance/set', { userIds: [user.id] });
-                                setMessage({ type: 'success', text: `Присутність позначена для ${user.name || user.username}` });
+                                  await apiCall('POST', '/api/users/attendance/unset', { userIds: [user.id] });
+                                  setMessage({ type: 'success', text: `Присутність знята для ${user.name || user.username}` });
+                                } else {
+                                  await apiCall('POST', '/api/users/attendance/set', { userIds: [user.id] });
+                                  setMessage({ type: 'success', text: `Присутність позначена для ${user.name || user.username}` });
+                                }
+                                fetchUsers();
+                              } catch (err) {
+                                setMessage({ type: 'error', text: err.response?.data?.error || 'Помилка' });
                               }
-                              fetchUsers();
-                            } catch (err) {
-                              setMessage({ type: 'error', text: err.response?.data?.error || 'Помилка' });
-                            }
-                          }}>
-                            {user.present ? '✓ Так' : '✗ Ні'}
-                          </span>
+                            }}>
+                              {user.present ? '✓ Так' : '✗ Ні'}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '12px', color: '#9ca3af' }}>—</span>
+                          )}
                         </td>
                         <td style={{ padding: '10px', textAlign: 'center' }}>
                           {user.role === 'student' && (
@@ -343,7 +455,7 @@ function AdminDashboard() {
                               className="btn-primary btn-small"
                               onClick={() => viewStudentProfile(user)}
                               
-                              title="Переглядати профіль та талони учня"
+                              title="Переглянути профіль і талони учня"
                             >
                               📋 Профіль
                             </button>
@@ -366,7 +478,7 @@ function AdminDashboard() {
       {activeTab === 'scan' && (
         <div className="tab-content">
           <div className="scanner-card">
-            <QRScanner isVisible={activeTab === 'scan'} onScan={(data) => { console.log('Voucher scanned:', data); setMessage({ type: 'success', text: `Талон від ${data.owner_name || 'невідомого'} обработано` }); }} />
+            <QRScanner isVisible={activeTab === 'scan'} onScan={(data) => { console.log('Voucher scanned:', data); setMessage({ type: 'success', text: `Талон від ${data.owner_name || 'невідомого'} оброблено` }); }} />
           </div>
         </div>
       )}
@@ -397,7 +509,7 @@ function AdminDashboard() {
                     <tr style={{ borderBottom: '2px solid #ddd', backgroundColor: '#f5f5f5' }}>
                       <th style={{ padding: '10px', textAlign: 'left' }}>Власник</th>
                       <th style={{ padding: '10px', textAlign: 'center' }}>Дата створення</th>
-                      <th style={{ padding: '10px', textAlign: 'center' }}>Строк дії</th>
+                      <th style={{ padding: '10px', textAlign: 'center' }}>Термін дії</th>
                       <th style={{ padding: '10px', textAlign: 'center' }}>Використано</th>
                       <th style={{ padding: '10px', textAlign: 'center' }}>Статус</th>
                       <th style={{ padding: '10px', textAlign: 'center' }}>Дія</th>
@@ -405,40 +517,48 @@ function AdminDashboard() {
                   </thead>
                   <tbody>
                     {allVouchers.map(voucher => {
-                      const is12HourExpired = isVoucherExpiredByIssuedAt(voucher);
-                      const timeRemaining = getVoucherTimeRemaining(voucher);
+                      const isFullyUsed = Number(voucher.current_uses || 0) >= Number(voucher.max_uses || 1);
+                      const isUsed = Boolean(voucher.isUsed || isFullyUsed);
+                      const is12HourExpired = !isUsed && isVoucherExpiredByIssuedAt(voucher);
+                      const timeRemaining = isUsed ? null : getVoucherTimeRemaining(voucher);
                       return (
                       <tr key={voucher.id} style={{ borderBottom: '1px solid #eee', backgroundColor: is12HourExpired ? '#ffebee' : 'transparent' }}>
                         <td style={{ padding: '10px' }}>{voucher.owner_name || voucher.owner_username || '-'}</td>
                         <td style={{ padding: '10px', textAlign: 'center', fontSize: '13px' }}>{voucher.created_date}</td>
                         <td style={{ padding: '10px', textAlign: 'center', fontSize: '13px' }}>
-                          {voucher.expires_date ? (
-                            <div>{voucher.expires_date}</div>
-                          ) : (!voucher.issued_at) ? (
-                            <div>{`🕐 ${VOUCHER_EXPIRY_HOURS} год`}</div>
-                          ) : null}
-                          <div style={{ fontSize: '11px', color: is12HourExpired ? '#c62828' : '#666', fontWeight: is12HourExpired ? 'bold' : 'normal' }}>
-                            {voucher.issued_at ? (
-                              <>
-                                {timeRemaining === '❌ Строк дії минув' ? (
-                                  <span style={{ color: '#c62828', fontWeight: 'bold' }}>❌ Строк дії минув</span>
+                          {isUsed ? (
+                            <div style={{ color: '#999' }}>—</div>
+                          ) : (
+                            <>
+                              {voucher.expires_date ? (
+                                <div>{voucher.expires_date}</div>
+                              ) : (!voucher.issued_at) ? (
+                                <div>{`🕐 ${VOUCHER_EXPIRY_HOURS} год`}</div>
+                              ) : null}
+                              <div style={{ fontSize: '11px', color: is12HourExpired ? '#c62828' : '#666', fontWeight: is12HourExpired ? 'bold' : 'normal' }}>
+                                {voucher.issued_at ? (
+                                  <>
+                                    {timeRemaining === '❌ Строк дії минув' ? (
+                                      <span style={{ color: '#c62828', fontWeight: 'bold' }}>❌ Строк дії минув</span>
+                                    ) : (
+                                      <>🕐 {timeRemaining}</>
+                                    )}
+                                  </>
                                 ) : (
-                                  <>🕐 {timeRemaining}</>
+                                  <>
+                                    ⚠️ Немає часу видачі
+                                  </>
                                 )}
-                              </>
-                            ) : (
-                              <>
-                                ⚠️ Немає часу видачи
-                              </>
-                            )}
-                          </div>
+                              </div>
+                            </>
+                          )}
                         </td>
                         <td style={{ padding: '10px', textAlign: 'center' }}>
                           <span style={{ 
                             padding: '2px 6px', 
                             borderRadius: '3px',
-                            backgroundColor: voucher.current_uses >= voucher.max_uses ? '#ffcdd2' : '#e8f5e9',
-                            color: voucher.current_uses >= voucher.max_uses ? '#c62828' : '#2e7d32',
+                            backgroundColor: isUsed ? '#ffcdd2' : '#e8f5e9',
+                            color: isUsed ? '#c62828' : '#2e7d32',
                             fontSize: '12px',
                             fontWeight: 'bold'
                           }}>
@@ -446,21 +566,15 @@ function AdminDashboard() {
                           </span>
                         </td>
                         <td style={{ padding: '10px', textAlign: 'center' }}>
-                          {(() => {
-                            const isFullyUsed = voucher.current_uses >= voucher.max_uses;
-                            const isExp12h = isVoucherExpiredByIssuedAt(voucher);
-                            return (
-                              <span style={{
-                                padding: '3px 8px',
-                                borderRadius: '3px',
-                                fontSize: '12px',
-                                backgroundColor: isFullyUsed ? '#ffcdd2' : (isExp12h ? '#ffcdd2' : (voucher.status === 'active' ? '#c8e6c9' : '#fff9c4')),
-                                color: isFullyUsed ? '#c62828' : (isExp12h ? '#c62828' : (voucher.status === 'active' ? '#2e7d32' : '#f57f17'))
-                              }}>
-                                {isFullyUsed ? '✗ Повністю використаний' : (isExp12h ? '❌ Строк дії минув' : (voucher.status === 'active' ? '✓ Активний' : 'Неактивний'))}
-                              </span>
-                            );
-                          })()}
+                          <span style={{
+                            padding: '3px 8px',
+                            borderRadius: '3px',
+                            fontSize: '12px',
+                            backgroundColor: isUsed ? '#ffcdd2' : (is12HourExpired ? '#ffcdd2' : (voucher.status === 'active' ? '#c8e6c9' : '#fff9c4')),
+                            color: isUsed ? '#c62828' : (is12HourExpired ? '#c62828' : (voucher.status === 'active' ? '#2e7d32' : '#f57f17'))
+                          }}>
+                            {isUsed ? '✗ Повністю використаний' : (is12HourExpired ? '❌ Строк дії минув' : (voucher.status === 'active' ? '✓ Активний' : 'Неактивний'))}
+                          </span>
                         </td>
                         <td style={{ padding: '10px', textAlign: 'center' }}>
                           <button 
@@ -544,7 +658,7 @@ function AdminDashboard() {
             {loading ? (
               <div className="loading">Завантаження...</div>
             ) : !stats || stats.length === 0 ? (
-              <div className="alert alert-info">Статистика не доступна</div>
+              <div className="alert alert-info">Статистика недоступна</div>
             ) : (
               <div className="stats-table">
                 {(() => {
@@ -651,7 +765,7 @@ function AdminDashboard() {
           }}>
             <h3 style={{ marginTop: 0, color: '#d32f2f' }}>⚠️ Підтвердження видалення</h3>
             <p style={{ color: '#666', marginBottom: '20px' }}>
-              Ви впевнені, що хочете видалити цей талон? Цю дію неможна скасувати.
+              Ви впевнені, що хочете видалити цей талон? Цю дію не можна скасувати.
             </p>
             <div className="modal-actions-row">
               <button
@@ -769,15 +883,43 @@ function AdminDashboard() {
                         <tr>
                           <td style={{ padding: '5px 0', fontWeight: 'bold' }}>Статус:</td>
                           <td style={{ padding: '5px 0', textAlign: 'right' }}>
-                            <span style={{
-                              padding: '2px 6px',
-                              borderRadius: '3px',
-                              backgroundColor: voucher.status === 'active' ? '#c8e6c9' : '#fff9c4',
-                              color: voucher.status === 'active' ? '#2e7d32' : '#f57f17',
-                              fontSize: '11px'
-                            }}>
-                              {voucher.status === 'active' ? '✓ Активний' : 'Неактивний'}
-                            </span>
+                            {(() => {
+                              const isFullyUsed = Number(voucher.current_uses || 0) >= Number(voucher.max_uses || 1);
+                              const isUsed = Boolean(
+                                voucher.usedToday ||
+                                voucher.isUsed ||
+                                voucher.isExhausted ||
+                                isFullyUsed
+                              );
+                              const isExpired = Boolean(voucher.isExpired || isVoucherExpiredByIssuedAt(voucher));
+
+                              const statusText = isUsed
+                                ? '✓ Використано'
+                                : isExpired
+                                  ? '❌ Строк дії минув'
+                                  : voucher.status === 'active'
+                                    ? '✓ Активний'
+                                    : 'Неактивний';
+
+                              const statusStyle = isUsed || isExpired
+                                ? { backgroundColor: '#ffcdd2', color: '#c62828' }
+                                : voucher.status === 'active'
+                                  ? { backgroundColor: '#c8e6c9', color: '#2e7d32' }
+                                  : { backgroundColor: '#fff9c4', color: '#f57f17' };
+
+                              return (
+                                <span
+                                  style={{
+                                    padding: '2px 6px',
+                                    borderRadius: '3px',
+                                    fontSize: '11px',
+                                    ...statusStyle
+                                  }}
+                                >
+                                  {statusText}
+                                </span>
+                              );
+                            })()}
                           </td>
                         </tr>
                         <tr>

@@ -1,134 +1,265 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import apiClient from '../api/client.js';
 import './AdminSettings.css';
 import './AdminMobileOptimizations.css';
 
+const TEXT = {
+  title: 'Налаштування системи',
+  subtitle: 'Керуйте параметрами застосунку, безпекою та поведінкою талонів.',
+  searchPlaceholder: 'Пошук налаштувань...',
+  loading: 'Завантаження налаштувань...',
+  nothingFound: 'Нічого не знайдено за вашим запитом.',
+  noSettingsCategory: 'У цій категорії немає налаштувань.',
+  selectCategory: 'Оберіть категорію зліва, щоб переглянути налаштування.',
+  noChanges: 'Немає змін для збереження.',
+  saveSuccess: 'Зміни успішно збережено.',
+  backupSuccess: 'Бекап налаштувань успішно завантажено.',
+  restoreSuccess: 'Налаштування відновлено з файлу.',
+  resetSuccess: 'Налаштування скинуто до стандартних значень.',
+  loadError: 'Не вдалося завантажити налаштування.',
+  saveError: 'Не вдалося зберегти налаштування.',
+  backupError: 'Не вдалося створити бекап.',
+  restoreError: 'Не вдалося відновити налаштування.',
+  resetError: 'Не вдалося скинути налаштування.',
+  changedLabel: 'Змінено налаштувань',
+  save: 'Зберегти',
+  cancel: 'Скасувати зміни',
+  refresh: 'Оновити',
+  backup: 'Створити бекап',
+  restore: 'Відновити з файлу',
+  defaults: 'Скинути до стандартних',
+  nonEditableHint: 'Це системний параметр тільки для читання.',
+  restoreConfirm: 'Поточні налаштування будуть замінені даними з файлу. Продовжити?',
+  resetConfirm: 'Скинути всі налаштування до стандартних значень?',
+  reloadPage: 'Оновити сторінку'
+};
+
+function normalizeValueByType(value, type) {
+  if (type === 'boolean') {
+    return value === true || value === 'true' || value === '1' || value === 1;
+  }
+
+  if (type === 'number') {
+    if (value === '' || value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return value === null || value === undefined ? '' : String(value);
+}
+
+function areValuesEqual(a, b, type) {
+  if (type === 'number') {
+    const left = normalizeValueByType(a, 'number');
+    const right = normalizeValueByType(b, 'number');
+    return left === right;
+  }
+
+  if (type === 'boolean') {
+    return normalizeValueByType(a, 'boolean') === normalizeValueByType(b, 'boolean');
+  }
+
+  return normalizeValueByType(a, 'string') === normalizeValueByType(b, 'string');
+}
+
+function toApiValue(value, type) {
+  if (type === 'boolean') {
+    return normalizeValueByType(value, 'boolean') ? 'true' : 'false';
+  }
+
+  if (type === 'number') {
+    const parsed = normalizeValueByType(value, 'number');
+    if (parsed === null) {
+      throw new Error('Числове поле не може бути порожнім');
+    }
+    return parsed;
+  }
+
+  return normalizeValueByType(value, 'string');
+}
+
+function formatRequestError(err, fallback) {
+  const status = err?.response?.status;
+  if (status === 401) return 'Сесія завершена. Увійдіть у систему знову.';
+  if (status === 403) return 'Недостатньо прав для цієї дії.';
+  if (!status && err?.message) return err.message;
+  return fallback;
+}
+
 function AdminSettings() {
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
   const [changedSettings, setChangedSettings] = useState({});
   const [activeCategory, setActiveCategory] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const restoreInputRef = useRef(null);
 
-  // Додати логіку для динамічного позиціонування tooltip'ю
-  useEffect(() => {
-    const handleTooltipPosition = () => {
-      const helpIcons = document.querySelectorAll('.help-icon');
-      helpIcons.forEach(icon => {
-        const rect = icon.getBoundingClientRect();
-        
-        // Перевіримо, чи tooltip виходить за краї
-        if (rect.left < 150) {
-          icon.setAttribute('data-position', 'right');
-        } else if (rect.right > window.innerWidth - 150) {
-          icon.setAttribute('data-position', 'left');
-        } else {
-          icon.setAttribute('data-position', 'center');
-        }
-      });
-    };
-
-    // Виконати при монтуванні та при resize
-    handleTooltipPosition();
-    window.addEventListener('resize', handleTooltipPosition);
-    return () => window.removeEventListener('resize', handleTooltipPosition);
-  }, []);
-
-  // Завантажити налаштування
   const loadSettings = useCallback(async () => {
     setLoading(true);
     try {
-      console.log('📥 Loading settings from API...');
       const response = await apiClient.get('/api/admin/config');
-      console.log('✓ Settings loaded:', response.data);
-      
-      if (!response.data || typeof response.data !== 'object') {
-        throw new Error('Invalid response format');
+      const data = response?.data;
+
+      if (!data || typeof data !== 'object') {
+        throw new Error('Invalid settings payload');
       }
-      
-      setSettings(response.data);
-      
-      setActiveCategory((prevCategory) => {
-        if (prevCategory) return prevCategory;
-        const firstCategory = Object.keys(response.data)[0] || null;
-        if (firstCategory) {
-          console.log('🔹 Setting initial category:', firstCategory);
-        }
-        return firstCategory;
-      });
+
+      setSettings(data);
       setMessage(null);
     } catch (err) {
-      console.error('❌ Error loading settings:', err);
       setMessage({
         type: 'error',
-        text: err.response?.data?.error || err.message || 'Помилка завантаження налаштувань'
+        text: formatRequestError(err, TEXT.loadError)
       });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
-  // Завантажити налаштування при монтуванні
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
 
-  const handleSettingChange = (key, value, type) => {
-    setChangedSettings(prev => ({
-      ...prev,
-      [key]: { value, type }
-    }));
-  };
+  const filteredSettings = useMemo(() => {
+    const query = String(searchTerm || '').trim().toLowerCase();
+    if (!query) return settings;
+
+    return Object.keys(settings || {}).reduce((acc, categoryKey) => {
+      const categoryData = settings[categoryKey];
+      if (!categoryData || !Array.isArray(categoryData.settings)) return acc;
+
+      const visibleSettings = categoryData.settings.filter((setting) => {
+        return (
+          String(setting.label || '').toLowerCase().includes(query) ||
+          String(setting.description || '').toLowerCase().includes(query) ||
+          String(setting.key || '').toLowerCase().includes(query)
+        );
+      });
+
+      if (visibleSettings.length > 0) {
+        acc[categoryKey] = {
+          ...categoryData,
+          settings: visibleSettings
+        };
+      }
+
+      return acc;
+    }, {});
+  }, [settings, searchTerm]);
+
+  useEffect(() => {
+    const keys = Object.keys(filteredSettings || {});
+
+    if (keys.length === 0) {
+      setActiveCategory(null);
+      return;
+    }
+
+    if (!activeCategory || !filteredSettings[activeCategory]) {
+      setActiveCategory(keys[0]);
+    }
+  }, [filteredSettings, activeCategory]);
+
+  const categories = useMemo(() => Object.entries(filteredSettings || {}), [filteredSettings]);
+
+  const visibleSettingsCount = useMemo(() => {
+    return categories.reduce((sum, [, categoryData]) => sum + (categoryData.settings?.length || 0), 0);
+  }, [categories]);
+
+  const hasChanges = Object.keys(changedSettings).length > 0;
+  const busy = loading || saving;
+
+  const getCurrentValue = useCallback(
+    (setting) => {
+      const changed = changedSettings[setting.key];
+      return changed ? changed.value : setting.value;
+    },
+    [changedSettings]
+  );
+
+  const handleSettingChange = useCallback((setting, nextValue) => {
+    setChangedSettings((prev) => {
+      const next = { ...prev };
+      const originalValue = setting.value;
+
+      if (areValuesEqual(originalValue, nextValue, setting.type)) {
+        delete next[setting.key];
+      } else {
+        next[setting.key] = {
+          value: nextValue,
+          type: setting.type,
+          min: setting.min,
+          max: setting.max
+        };
+      }
+
+      return next;
+    });
+  }, []);
 
   const saveSettings = async () => {
-    if (Object.keys(changedSettings).length === 0) {
-      setMessage({ type: 'info', text: 'Немає змін для збереження' });
+    if (!hasChanges) {
+      setMessage({ type: 'info', text: TEXT.noChanges });
       return;
     }
 
     try {
-      setLoading(true);
-      const settingsArray = Object.entries(changedSettings).map(([key, { value, type }]) => ({
-        key,
-        value,
-        type
-      }));
+      setSaving(true);
 
-      const response = await apiClient.post('/api/admin/config/bulk-update', {
-        settings: settingsArray
+      const payload = Object.entries(changedSettings).map(([key, item]) => {
+        const value = toApiValue(item.value, item.type);
+
+        if (item.type === 'number') {
+          if (item.min !== undefined && value < item.min) {
+            throw new Error(`Значення для "${key}" має бути не менше ${item.min}`);
+          }
+          if (item.max !== undefined && value > item.max) {
+            throw new Error(`Значення для "${key}" має бути не більше ${item.max}`);
+          }
+        }
+
+        return {
+          key,
+          type: item.type,
+          value
+        };
       });
 
-      const updatedKeys = new Set((response.data.updated || []).map(item => item.key));
-      const failedKeys = new Set((response.data.errors || []).map(item => item.key));
+      const response = await apiClient.post('/api/admin/config/bulk-update', {
+        settings: payload
+      });
 
-      if (response.data.success) {
+      const updatedCount = response?.data?.updated?.length || 0;
+      const failed = response?.data?.errors || [];
+
+      if (failed.length === 0) {
         setMessage({
           type: 'success',
-          text: `✓ Збережено ${response.data.updated.length} налаштувань`
+          text: `${TEXT.saveSuccess} Оновлено: ${updatedCount}.`
         });
         setChangedSettings({});
-        // Перезавантажити налаштування
-        setTimeout(() => loadSettings(), 1000);
+        await loadSettings();
       } else {
+        const failedKeys = new Set(failed.map((item) => item.key));
+        setChangedSettings((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => failedKeys.has(key))));
         setMessage({
           type: 'warning',
-          text: `Оновлено: ${response.data.updated.length}, Помилок: ${response.data.errors.length}`
+          text: `Частково збережено. Успішно: ${updatedCount}, помилок: ${failed.length}.`
         });
-        setChangedSettings(prev => Object.fromEntries(
-          Object.entries(prev).filter(([key]) => failedKeys.has(key))
-        ));
-        if (updatedKeys.size > 0) {
-          setTimeout(() => loadSettings(), 600);
+        if (updatedCount > 0) {
+          await loadSettings();
         }
       }
     } catch (err) {
-      console.error('Error saving settings:', err);
       setMessage({
         type: 'error',
-        text: err.response?.data?.error || 'Помилка збереження налаштувань'
+        text: formatRequestError(err, TEXT.saveError)
       });
+    } finally {
+      setSaving(false);
     }
-    setLoading(false);
   };
 
   const resetChanges = () => {
@@ -139,420 +270,389 @@ function AdminSettings() {
   const backupSettings = async () => {
     try {
       const response = await apiClient.get('/api/admin/config/backup/download');
-      const source = response.data || {};
-      const normalizedBackup = {
-        ...source,
-        currentValues: source.currentValues || source.values || {},
-        settings: source.settings || source.schema || source.defaults || {},
-        schema: source.schema || source.settings || source.defaults || {}
-      };
-      const dataStr = JSON.stringify(normalizedBackup, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
+      const backup = response?.data || {};
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `school-vouchers-settings-backup-${new Date().toISOString().split('T')[0]}.json`;
+      link.download = `settings-backup-${new Date().toISOString().split('T')[0]}.json`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      
-      setMessage({
-        type: 'success',
-        text: '✓ Бекап налаштувань скачаний'
-      });
+
+      setMessage({ type: 'success', text: TEXT.backupSuccess });
     } catch (err) {
-      console.error('Error backing up settings:', err);
       setMessage({
         type: 'error',
-        text: 'Помилка створення бекапу: ' + (err.response?.data?.error || err.message)
+        text: formatRequestError(err, TEXT.backupError)
       });
     }
-  };
-
-  const resetToDefaults = async () => {
-    const confirmed = window.confirm(
-      '⚠️ Ви впевнені? Всі налаштування будуть скинуті на стандартні значення!'
-    );
-
-    if (!confirmed) return;
-
-    try {
-      setLoading(true);
-      const response = await apiClient.post('/api/admin/config/reset-to-defaults', {});
-      
-      setMessage({
-        type: 'success',
-        text: response.data.message || '✓ Налаштування скинуті на стандартні'
-      });
-      setChangedSettings({});
-      
-      setTimeout(() => loadSettings(), 1500);
-    } catch (err) {
-      console.error('Error resetting settings:', err);
-      setMessage({
-        type: 'error',
-        text: 'Помилка скидання налаштувань: ' + (err.response?.data?.error || err.message)
-      });
-    }
-    setLoading(false);
   };
 
   const restoreFromBackup = async (file) => {
     try {
-      const text = await file.text();
-      const backupData = JSON.parse(text);
-      const schema = backupData.settings || backupData.schema || backupData.defaults;
-      const currentValues = backupData.currentValues || backupData.values;
+      const rawText = await file.text();
+      const parsed = JSON.parse(rawText);
 
-      if (!schema && !currentValues) {
-        throw new Error('Невірний формат бекапу');
+      const currentValues = parsed.currentValues || parsed.values;
+      const schema = parsed.settings || parsed.schema || parsed.defaults;
+
+      if (!currentValues && !schema) {
+        throw new Error('Некоректний формат бекапу');
       }
 
-      setLoading(true);
+      setSaving(true);
       const payload = {};
-      if (schema) payload.settings = schema;
-      if (currentValues) payload.currentValues = currentValues;
+      if (currentValues && typeof currentValues === 'object') payload.currentValues = currentValues;
+      if (schema && typeof schema === 'object') payload.settings = schema;
 
       const response = await apiClient.post('/api/admin/config/restore', payload);
 
+      setChangedSettings({});
+      const restoredCount = Number(response?.data?.restored);
       setMessage({
         type: 'success',
-        text: response.data.message || `✓ Відновлено ${response.data.restored} налаштувань`
+        text: Number.isFinite(restoredCount)
+          ? `${TEXT.restoreSuccess} Відновлено: ${restoredCount}.`
+          : TEXT.restoreSuccess
       });
-      setChangedSettings({});
-
-      setTimeout(() => loadSettings(), 1500);
+      await loadSettings();
     } catch (err) {
-      console.error('Error restoring settings:', err);
       setMessage({
         type: 'error',
-        text: 'Помилка відновлення: ' + (err.response?.data?.error || err.message)
+        text: formatRequestError(err, TEXT.restoreError)
       });
+    } finally {
+      setSaving(false);
     }
-    setLoading(false);
   };
 
-  const handleRestoreFile = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const confirmed = window.confirm(
-        '⚠️ Ви впевнені? Поточні налаштування будуть замінені на налаштування з файлу!'
-      );
-      if (confirmed) {
-        restoreFromBackup(file);
-      }
+  const handleRestoreFileChange = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) return;
+
+    if (!window.confirm(TEXT.restoreConfirm)) {
+      return;
     }
-    // Reset input
-    e.target.value = '';
+
+    restoreFromBackup(file);
   };
 
-  // Фільтрування налаштувань по категоріям
-  const filteredSettings = searchTerm
-    ? Object.keys(settings).reduce((acc, category) => {
-        const categoryData = settings[category];
-        if (!categoryData || !categoryData.settings) return acc;
-        
-        const normalizedSearch = String(searchTerm || '').toLowerCase();
-        const filtered = categoryData.settings.filter(
-          s => String(s.label || '').toLowerCase().includes(normalizedSearch) ||
-               String(s.description || '').toLowerCase().includes(normalizedSearch)
-        );
-        if (filtered.length > 0) {
-          acc[category] = { ...categoryData, settings: filtered };
-        }
-        return acc;
-      }, {})
-    : settings;
+  const resetToDefaults = async () => {
+    if (!window.confirm(TEXT.resetConfirm)) {
+      return;
+    }
 
-  // Ensure activeCategory exists in filtered results (update when settings/search change)
-  useEffect(() => {
     try {
-      const keys = Object.keys(filteredSettings || {});
-      if (keys.length === 0) {
-        setActiveCategory(null);
-        return;
-      }
-
-      if (!activeCategory || !filteredSettings[activeCategory]) {
-        setActiveCategory(keys[0]);
-      }
-    } catch (e) {
-      // ignore
+      setSaving(true);
+      const response = await apiClient.post('/api/admin/config/reset-to-defaults', {});
+      setChangedSettings({});
+      const resetCount = Number(response?.data?.reset);
+      setMessage({
+        type: 'success',
+        text: Number.isFinite(resetCount)
+          ? `${TEXT.resetSuccess} Скинуто: ${resetCount}.`
+          : TEXT.resetSuccess
+      });
+      await loadSettings();
+    } catch (err) {
+      setMessage({
+        type: 'error',
+        text: formatRequestError(err, TEXT.resetError)
+      });
+    } finally {
+      setSaving(false);
     }
-  }, [searchTerm, settings, activeCategory, filteredSettings]);
+  };
+
+  const updateTooltipPosition = (event) => {
+    const icon = event.currentTarget;
+    const rect = icon.getBoundingClientRect();
+
+    if (rect.left < 160) {
+      icon.setAttribute('data-position', 'right');
+      return;
+    }
+
+    if (rect.right > window.innerWidth - 160) {
+      icon.setAttribute('data-position', 'left');
+      return;
+    }
+
+    icon.setAttribute('data-position', 'center');
+  };
 
   const renderSettingInput = (setting) => {
-    const key = setting.key;
-    const currentValue = changedSettings[key]?.value ?? setting.value;
-    const settingType = changedSettings[key]?.type ?? setting.type;
+    const current = getCurrentValue(setting);
+    const disabled = setting.editable === false;
+    const inputId = `setting-${setting.key}`;
 
-    const commonProps = {
-      onChange: (e) => handleSettingChange(key, e.target.value, settingType),
-      className: 'setting-input'
-    };
-
-    switch (setting.type) {
-      case 'boolean':
-        return (
-          <label className='setting-checkbox'>
-            <input
-              type='checkbox'
-              checked={currentValue === true || currentValue === 'true'}
-              onChange={(e) => handleSettingChange(key, e.target.checked ? 'true' : 'false', 'boolean')}
-              disabled={setting.editable === false}
-            />
-          </label>
-        );
-
-      case 'select':
-        return (
-          <select
-            value={currentValue}
-            {...commonProps}
-            disabled={setting.editable === false}
-          >
-            {setting.options?.map(opt => (
-              <option key={opt} value={opt}>{opt}</option>
-            ))}
-          </select>
-        );
-
-      case 'textarea':
-        return (
-          <textarea
-            value={currentValue || ''}
-            {...commonProps}
-            rows={4}
-            disabled={setting.editable === false}
-          />
-        );
-
-      case 'number':
-        return (
+    if (setting.type === 'boolean') {
+      return (
+        <label className="setting-checkbox" htmlFor={inputId}>
           <input
-            type='number'
-            value={currentValue || 0}
-            {...commonProps}
-            disabled={setting.editable === false}
-            min={setting.min}
-            max={setting.max}
-            step={setting.step || 1}
+            id={inputId}
+            type="checkbox"
+            checked={normalizeValueByType(current, 'boolean')}
+            onChange={(event) => handleSettingChange(setting, event.target.checked)}
+            disabled={disabled}
           />
-        );
-
-      case 'text':
-      default:
-        return (
-          <input
-            type='text'
-            value={currentValue || ''}
-            {...commonProps}
-            disabled={setting.editable === false}
-            placeholder={setting.default}
-          />
-        );
+        </label>
+      );
     }
+
+    if (setting.type === 'select') {
+      const options = Array.isArray(setting.options) ? setting.options : [];
+      return (
+        <select
+          id={inputId}
+          className="setting-input"
+          value={current ?? ''}
+          onChange={(event) => handleSettingChange(setting, event.target.value)}
+          disabled={disabled}
+        >
+          {options.map((option) => {
+            const optionValue = typeof option === 'object' ? option.value : option;
+            const optionLabel = typeof option === 'object' ? option.label || option.value : option;
+            return (
+              <option key={String(optionValue)} value={optionValue}>
+                {optionLabel}
+              </option>
+            );
+          })}
+        </select>
+      );
+    }
+
+    if (setting.type === 'textarea') {
+      return (
+        <textarea
+          id={inputId}
+          className="setting-input"
+          rows={4}
+          value={current ?? ''}
+          onChange={(event) => handleSettingChange(setting, event.target.value)}
+          disabled={disabled}
+        />
+      );
+    }
+
+    if (setting.type === 'number') {
+      return (
+        <input
+          id={inputId}
+          type="number"
+          className="setting-input"
+          value={current ?? ''}
+          min={setting.min}
+          max={setting.max}
+          step={setting.step || 1}
+          onChange={(event) => handleSettingChange(setting, event.target.value)}
+          disabled={disabled}
+        />
+      );
+    }
+
+    return (
+      <input
+        id={inputId}
+        type="text"
+        className="setting-input"
+        value={current ?? ''}
+        placeholder={setting.default ? String(setting.default) : ''}
+        onChange={(event) => handleSettingChange(setting, event.target.value)}
+        disabled={disabled}
+      />
+    );
   };
+
+  const activeCategoryData = activeCategory ? filteredSettings[activeCategory] : null;
 
   if (loading && Object.keys(settings).length === 0) {
     return (
-      <div className='admin-settings loading'>
-        <p>⏳ Завантаження налаштувань системи...</p>
+      <div className="admin-settings loading">
+        <p>{TEXT.loading}</p>
       </div>
     );
   }
 
-  if (Object.keys(settings).length === 0 && !loading) {
+  if (!loading && Object.keys(settings).length === 0) {
     return (
-      <div className='admin-settings'>
-        <div className='message message-error'>
-          ❌ Не вдалось завантажити налаштування. Спробуйте перезавантажити сторінку.
-          <button onClick={() => window.location.reload()} className='message-close'>↻</button>
+      <div className="admin-settings">
+        <div className="message message-error">
+          {TEXT.loadError}
+          <button type="button" onClick={() => window.location.reload()} className="message-close" title={TEXT.reloadPage}>
+            ↻
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className='admin-settings'>
-      <div className='settings-wrapper'>
-      <div className='settings-header'>
-        <h2>🔧 Налаштування Системи</h2>
-        <div className='settings-search'>
-          <input
-            type='text'
-            placeholder='Пошук налаштування...'
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className='search-input'
-          />
-        </div>
-      </div>
-
-      {message && (
-        <div className={`message message-${message.type}`}>
-          {message.text}
-          <button onClick={() => setMessage(null)} className='message-close'>✕</button>
-        </div>
-      )}
-
-      <div className='settings-container'>
-        <div className='settings-categories'>
-          {Object.keys(filteredSettings).length === 0 ? (
-            <p className='no-categories'>Немає налаштувань</p>
-          ) : (
-            Object.keys(filteredSettings).map(category => (
-              <button
-                key={category}
-                className={`category-btn ${activeCategory === category ? 'active' : ''}`}
-                onClick={() => setActiveCategory(category)}
-              >
-                {filteredSettings[category].category}
-                <span className='setting-count'>
-                  {filteredSettings[category].settings?.length || 0}
-                </span>
-              </button>
-            ))
-          )}
+    <div className="admin-settings">
+      <div className="settings-wrapper">
+        <div className="settings-header">
+          <div className="settings-header-copy">
+            <h2>{TEXT.title}</h2>
+            <p className="settings-subtitle">{TEXT.subtitle}</p>
+          </div>
+          <div className="settings-search">
+            <input
+              type="text"
+              className="search-input"
+              placeholder={TEXT.searchPlaceholder}
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+            />
+          </div>
         </div>
 
-        <div className='settings-content'>
-          {activeCategory && filteredSettings[activeCategory]?.settings ? (
-            <>
-              <h3>{filteredSettings[activeCategory].category}</h3>
-              
-              <div className='settings-list'>
-                {filteredSettings[activeCategory].settings.length > 0 ? (
-                  filteredSettings[activeCategory].settings.map(setting => {
-                    const isChanged = changedSettings[setting.key] !== undefined;
-                    
-                    return (
-                      <div key={setting.key} className={`setting-item ${isChanged ? 'changed' : ''}`}>
-                        <div className='setting-label'>
-                          <label>
-                            {setting.label}
-                            {(setting.help || setting.description) && (
+        {message && (
+          <div className={`message message-${message.type}`}>
+            {message.text}
+            <button type="button" onClick={() => setMessage(null)} className="message-close" title="Закрити">
+              ✕
+            </button>
+          </div>
+        )}
+
+        <div className="settings-container">
+          <aside className="settings-categories">
+            {categories.length === 0 ? (
+              <p className="no-categories">{TEXT.nothingFound}</p>
+            ) : (
+              categories.map(([categoryKey, categoryData]) => (
+                <button
+                  type="button"
+                  key={categoryKey}
+                  className={`category-btn ${activeCategory === categoryKey ? 'active' : ''}`}
+                  onClick={() => setActiveCategory(categoryKey)}
+                >
+                  <span className="category-main">
+                    {categoryData.icon ? `${categoryData.icon} ` : ''}
+                    {categoryData.category || categoryKey}
+                  </span>
+                  <span className="setting-count">{categoryData.settings?.length || 0}</span>
+                </button>
+              ))
+            )}
+          </aside>
+
+          <section className="settings-content">
+            {activeCategoryData ? (
+              <>
+                <h3>{activeCategoryData.category || activeCategory}</h3>
+                <p className="settings-subtitle-line">Налаштувань у вибраній категорії: {activeCategoryData.settings?.length || 0}</p>
+
+                <div className="settings-list">
+                  {(activeCategoryData.settings || []).length === 0 ? (
+                    <p className="no-settings">{TEXT.noSettingsCategory}</p>
+                  ) : (
+                    activeCategoryData.settings.map((setting) => {
+                      const isChanged = Object.prototype.hasOwnProperty.call(changedSettings, setting.key);
+
+                      return (
+                        <div key={setting.key} className={`setting-item ${isChanged ? 'changed' : ''}`}>
+                          <div className="setting-label">
+                            <label htmlFor={`setting-${setting.key}`}>{setting.label || setting.key}</label>
+                            <span className="setting-key">{setting.key}</span>
+                            {isChanged && <span className="changed-indicator">Змінено</span>}
+                          </div>
+
+                          {setting.description && <p className="setting-description">{setting.description}</p>}
+
+                          <div className="setting-value">
+                            {renderSettingInput(setting)}
+                            {setting.min !== undefined && setting.max !== undefined && (
+                              <span className="setting-range">Діапазон: {setting.min} - {setting.max}</span>
+                            )}
+                          </div>
+
+                          {(setting.help || setting.description) && (
+                            <div className="setting-help-row">
                               <span
-                                className='help-icon'
-                                data-tooltip={setting.help || setting.description}
+                                className="help-icon"
                                 tabIndex={0}
+                                data-tooltip={setting.help || setting.description}
                                 aria-label={setting.help || setting.description}
+                                onMouseEnter={updateTooltipPosition}
+                                onFocus={updateTooltipPosition}
                               >
                                 ?
                               </span>
-                            )}
-                          </label>
-                          {isChanged && <span className='changed-indicator'>●</span>}
-                        </div>
-                        
-                        {setting.description && (
-                          <p className='setting-description'>{setting.description}</p>
-                        )}
-
-                        <div className='setting-value'>
-                          {renderSettingInput(setting)}
-                          
-                          {setting.min !== undefined && setting.max !== undefined && (
-                            <span className='setting-range'>
-                              ({setting.min} - {setting.max})
-                            </span>
+                            </div>
                           )}
+
+                          {setting.editable === false && <p className="setting-hint">{TEXT.nonEditableHint}</p>}
                         </div>
-
-                        {setting.editable === false && (
-                          <p className='setting-hint'>
-                            ℹ️  Це налаштування змінюється тільки через .env файл (потребує перезавантаження сервера)
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p className='no-settings'>Немає налаштувань у цій категорії</p>
-                )}
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="settings-content-empty">
+                <p>{categories.length === 0 ? TEXT.nothingFound : TEXT.selectCategory}</p>
               </div>
-            </>
-          ) : (
-            <div className='settings-content-empty'>
-              <p>Виберіть категорію зліва</p>
-            </div>
-          )}
+            )}
+          </section>
+        </div>
+
+        <div className="settings-actions">
+          <div className="changes-info">
+            {hasChanges ? (
+              <p className="changes-count">
+                {TEXT.changedLabel}: <strong>{Object.keys(changedSettings).length}</strong>
+              </p>
+            ) : (
+              <p className="changes-count muted">Всі зміни збережені</p>
+            )}
+          </div>
+
+          <div className="action-buttons">
+            <button type="button" className="btn btn-primary" onClick={saveSettings} disabled={!hasChanges || busy}>
+              {TEXT.save}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={resetChanges} disabled={!hasChanges || busy}>
+              {TEXT.cancel}
+            </button>
+            <button type="button" className="btn btn-info" onClick={loadSettings} disabled={busy}>
+              {TEXT.refresh}
+            </button>
+          </div>
+
+          <div className="backup-buttons">
+            <button type="button" className="btn btn-warning" onClick={backupSettings} disabled={busy}>
+              {TEXT.backup}
+            </button>
+            <button type="button" className="btn btn-success" onClick={() => restoreInputRef.current?.click()} disabled={busy}>
+              {TEXT.restore}
+            </button>
+            <button type="button" className="btn btn-danger" onClick={resetToDefaults} disabled={busy}>
+              {TEXT.defaults}
+            </button>
+          </div>
+        </div>
+
+        <div className="settings-footer">
+          <p className="footer-note">
+            Порада: після критичних змін безпеки або системних параметрів перезапустіть бекенд-сервіс.
+          </p>
+          <p className="footer-note secondary">Показано налаштувань: {visibleSettingsCount}</p>
         </div>
       </div>
 
-      <div className='settings-actions'>
-        <div className='changes-info'>
-          {Object.keys(changedSettings).length > 0 && (
-            <p className='changes-count'>
-              ⚡ Змінено: <strong>{Object.keys(changedSettings).length}</strong> налаштувань
-            </p>
-          )}
-        </div>
-
-        <div className='action-buttons'>
-          {Object.keys(changedSettings).length > 0 && (
-            <>
-              <button
-                className='btn btn-primary'
-                onClick={saveSettings}
-                disabled={loading}
-              >
-                💾 Зберегти
-              </button>
-              <button
-                className='btn btn-secondary'
-                onClick={resetChanges}
-              >
-                ↻ Скасувати
-              </button>
-            </>
-          )}
-          
-          <button
-            className='btn btn-info'
-            onClick={loadSettings}
-            disabled={loading}
-          >
-            🔄 Перезавантажити
-          </button>
-        </div>
-
-        <div className='backup-buttons'>
-          <button
-            className='btn btn-warning'
-            onClick={backupSettings}
-            title='Скачати бекап поточних налаштувань'
-          >
-            💾 Бекап
-          </button>
-
-          <label className='btn btn-success'>
-            📥 Відновити
-            <input
-              type='file'
-              accept='.json'
-              onChange={handleRestoreFile}
-              style={{ display: 'none' }}
-            />
-          </label>
-
-          <button
-            className='btn btn-danger'
-            onClick={resetToDefaults}
-            title='⚠️ Скинути всі налаштування на стандартні'
-          >
-            🔄 Дефолт
-          </button>
-        </div>
-      </div>
-
-      <div className='settings-footer'>
-        <p className='footer-note'>
-          ℹ️  Налаштування зберігаються в базі даних. Деякі налаштування можуть потребувати перезавантаження сервера.
-        </p>
-      </div>
-      </div>
+      <input
+        ref={restoreInputRef}
+        type="file"
+        accept="application/json,.json"
+        onChange={handleRestoreFileChange}
+        style={{ display: 'none' }}
+      />
     </div>
   );
 }

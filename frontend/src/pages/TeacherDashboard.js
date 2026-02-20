@@ -59,7 +59,7 @@ function TeacherDashboard() {
         console.log('Could not load class info');
       }
     } catch (e) {
-      setMessage({ type: 'error', text: e.response?.data?.error || 'Не вдалось завантажити учнів' });
+      setMessage({ type: 'error', text: e.response?.data?.error || 'Не вдалося завантажити учнів' });
     }
     setLoading(false);
   }, []);
@@ -112,7 +112,7 @@ function TeacherDashboard() {
 
   return (
     <div className="container">
-      <div className="dashboard-header">
+      <div className="teacher-header">
         <h1>👩‍🏫 Мій клас</h1>
         {classInfo && <p style={{color: '#666', marginTop: 5}}>Клас: <strong>{classInfo.name}</strong> ({classInfo.student_count} учнів)</p>}
       </div>
@@ -125,7 +125,7 @@ function TeacherDashboard() {
           <button 
             className={`tab-button ${activeTab === 'attendance' ? 'active' : ''}`}
             onClick={() => setActiveTab('attendance')}
-            title="Відмітьте присутність учнів вашого класу. Натисніть на учня щоб позначити/відпозначити"
+            title="Позначте присутність учнів вашого класу. Натисніть на учня, щоб позначити або скасувати позначення"
           >
             📋 Позначення присутності
           </button>
@@ -150,7 +150,7 @@ function TeacherDashboard() {
                   onClick={markAllPresent}
                   title="Позначити всіх учнів як присутніх одним кліком"
                 >
-                  ✓✓ Відмітити всіх учнів присутніми
+                  ✓✓ Позначити всіх учнів присутніми
                 </button>
 
                 <div className="table-scroll teacher-table-scroll" style={{ marginBottom: '15px' }}>
@@ -170,7 +170,7 @@ function TeacherDashboard() {
                           <tr key={student.id} style={{borderBottom: '1px solid #e0e0e0', backgroundColor: idx % 2 === 0 ? '#fff' : '#f9f9f9'}}>
                             <td style={{padding: '12px', fontWeight: 'bold', color: '#333'}}>{student.name}</td>
                             <td 
-                              title={isPresent ? "Натисніть щоб відмітити як відсутнього" : "Натисніть щоб відмітити як присутнього"}
+                              title={isPresent ? "Натисніть, щоб позначити як відсутнього" : "Натисніть, щоб позначити як присутнього"}
                               style={{
                                 padding: '8px 6px',
                                 textAlign: 'center',
@@ -199,8 +199,8 @@ function TeacherDashboard() {
             )}
             <div className="teacher-hint-box" style={{marginTop: '15px', padding: '10px', backgroundColor: '#f0f8ff', borderRadius: '6px', fontSize: '13px', color: '#555'}}>
               💡 <strong>Як користуватися:</strong> 
-              <br/>• Натисніть на учня щоб позначити його як <strong>присутнього</strong> або <strong>відсутнього</strong>
-              <br/>• Учні позначені як присутні отримають путівку в 09:15
+              <br/>• Натисніть на учня, щоб позначити його як <strong>присутнього</strong> або <strong>відсутнього</strong>
+              <br/>• Учні позначені як присутні отримають талон о 09:15
             </div>
           </div>
         )}

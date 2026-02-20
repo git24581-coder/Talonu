@@ -1,11 +1,28 @@
 import axios from 'axios';
 
+function isLocalHost(hostname) {
+  if (!hostname) return false;
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0') return true;
+  if (hostname.startsWith('192.168.') || hostname.startsWith('10.')) return true;
+  return /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
+}
+
 function resolveApiBaseUrl() {
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    const protocol = window.location.protocol || 'http:';
+    const host = window.location.hostname;
+
+    // Local/ LAN access should always point to the local backend.
+    if (isLocalHost(host)) {
+      return `${protocol}//${host}:3000`;
+    }
+  }
+
   if (process.env.REACT_APP_API_URL) {
     return process.env.REACT_APP_API_URL;
   }
 
-  // For mobile devices on the same LAN, use the current host instead of localhost.
+  // Fallback to current host when not explicitly configured.
   if (typeof window !== 'undefined' && window.location?.hostname) {
     const protocol = window.location.protocol || 'http:';
     const host = window.location.hostname;
@@ -44,7 +61,7 @@ instance.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      window.location.href = '/#/login';
     }
     return Promise.reject(error);
   }

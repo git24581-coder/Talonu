@@ -11,6 +11,12 @@ let engine = null;  // 'sqlite' or 'postgres'
 let sqliteDb = null;
 let pgPool = null;
 
+function getEnvInt(name, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number.parseInt(process.env[name] || '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
 // SQLite queries in this project use "?" placeholders.
 // PostgreSQL requires "$1, $2, ..." placeholders.
 function toPostgresParamsSql(sql) {
@@ -54,12 +60,20 @@ async function initDb() {
   if (dbUrl && dbUrl.startsWith('postgres')) {
     console.log('🐘 Using PostgreSQL...');
     engine = 'postgres';
+    const pgPoolMax = getEnvInt('PG_POOL_MAX', 30, 5, 200);
+    const pgIdleTimeoutMs = getEnvInt('PG_IDLE_TIMEOUT_MS', 30000, 1000, 300000);
+    const pgConnectionTimeoutMs = getEnvInt('PG_CONNECTION_TIMEOUT_MS', 3000, 500, 60000);
+    const pgStatementTimeoutMs = getEnvInt('PG_STATEMENT_TIMEOUT_MS', 10000, 1000, 300000);
+    const pgQueryTimeoutMs = getEnvInt('PG_QUERY_TIMEOUT_MS', 10000, 1000, 300000);
     
     pgPool = new Pool({
       connectionString: dbUrl,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      max: pgPoolMax,
+      idleTimeoutMillis: pgIdleTimeoutMs,
+      connectionTimeoutMillis: pgConnectionTimeoutMs,
+      statement_timeout: pgStatementTimeoutMs,
+      query_timeout: pgQueryTimeoutMs,
+      application_name: 'school-vouchers-backend'
     });
 
     pgPool.on('error', (err) => {
@@ -90,17 +104,22 @@ async function initDb() {
           reject(err);
         } else {
           console.log('✓ Connected to SQLite');
+
+          const sqliteBusyTimeoutMs = getEnvInt('SQLITE_BUSY_TIMEOUT_MS', 5000, 100, 60000);
+          const sqliteCacheSizePages = getEnvInt('SQLITE_CACHE_SIZE_PAGES', 50000, 1000, 200000);
+          const sqliteWalAutoCheckpointPages = getEnvInt('SQLITE_WAL_AUTOCHECKPOINT_PAGES', 1000, 100, 50000);
+          const sqliteMmapSizeBytes = getEnvInt('SQLITE_MMAP_SIZE_BYTES', 30000000, 1000000, 2000000000);
           
           // Enable aggressive performance settings for high concurrency
           sqliteDb.serialize(() => {
             sqliteDb.run('PRAGMA journal_mode=WAL');        // Write-ahead logging for concurrent reads
             sqliteDb.run('PRAGMA synchronous=NORMAL');      // Balance safety & speed
-            sqliteDb.run('PRAGMA cache_size=50000');        // 50MB cache
+            sqliteDb.run(`PRAGMA cache_size=${sqliteCacheSizePages}`); // More cache pages = fewer disk reads
             sqliteDb.run('PRAGMA temp_store=MEMORY');       // Temp tables in RAM
             sqliteDb.run('PRAGMA query_only=OFF');          // Allow writes
-            sqliteDb.run('PRAGMA busy_timeout=5000');       // 5s timeout before SQLITE_BUSY
-            sqliteDb.run('PRAGMA wal_autocheckpoint=1000'); // Checkpoint every 1000 pages
-            sqliteDb.run('PRAGMA mmap_size=30000000');      // Memory-map file
+            sqliteDb.run(`PRAGMA busy_timeout=${sqliteBusyTimeoutMs}`);       // Wait before SQLITE_BUSY
+            sqliteDb.run(`PRAGMA wal_autocheckpoint=${sqliteWalAutoCheckpointPages}`); // Checkpoint cadence
+            sqliteDb.run(`PRAGMA mmap_size=${sqliteMmapSizeBytes}`);          // Memory-map file
           });
           
           resolve(null);  // SQLite wrapped by singleton
