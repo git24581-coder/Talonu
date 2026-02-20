@@ -1,0 +1,241 @@
+/* Mobile Responsive Optimizations */
+
+@media (max-width: 1024px) {
+  .admin-container,
+  .student-container,
+  .cashier-container,
+  .admin-classes-container,
+  .admin-settings-container,
+  .admin-settings {
+    padding: 15px;
+  }
+
+  .admin-tabs {
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: center;
+  }
+
+  .tab-button {
+    width: auto;
+    flex: 0 0 auto;
+    border-left: none;
+  }
+
+  .tab-button.active {
+    border-left-color: transparent;
+    border-bottom-color: transparent;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .vouchers-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .classes-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .admin-header,
+  .cashier-header,
+  .student-header,
+  .classes-header,
+  .settings-header {
+    padding: 20px;
+  }
+
+  .admin-header h1,
+  .cashier-header h1,
+  .student-header h1 {
+    font-size: 24px;
+  }
+
+  .classes-header h2,
+  .settings-header h2 {
+    font-size: 20px;
+  }
+
+  .tab-content {
+    padding: 15px;
+    overflow: hidden;
+  }
+
+  .users-table,
+  .classes-table {
+    font-size: 12px;
+  }
+
+  .users-table th,
+  .users-table td,
+  .classes-table th,
+  .classes-table td {
+    padding: 8px;
+  }
+
+  .action-button {
+    padding: 4px 8px;
+    font-size: 11px;
+    margin: 0 2px;
+  }
+
+  .create-form {
+    padding: 15px;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .cashier-content {
+    grid-template-columns: 1fr;
+  }
+
+  .stat-card {
+    padding: 15px;
+  }
+
+  .stat-value {
+    font-size: 24px;
+  }
+
+  .form-group input,
+  .form-group select {
+    padding: 10px;
+  }
+
+  .admin-settings .settings-header {
+    padding: 0;
+    margin-bottom: 0;
+  }
+
+  .admin-settings .settings-container {
+    gap: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-container,
+  .student-container,
+  .cashier-container,
+  .admin-classes-container,
+  .admin-settings-container,
+  .admin-settings {
+    padding: 10px;
+  }
+
+  .admin-header,
+  .cashier-header,
+  .student-header,
+  .classes-header,
+  .settings-header {
+    padding: 15px;
+    margin-bottom: 20px;
+  }
+
+  .admin-header h1,
+  .cashier-header h1,
+  .student-header h1 {
+    font-size: 20px;
+  }
+
+  .classes-header h2,
+  .settings-header h2 {
+    font-size: 18px;
+  }
+
+  .tab-button {
+    padding: 10px 15px;
+    font-size: 14px;
+  }
+
+  .tab-content {
+    padding: 10px;
+    overflow: hidden;
+  }
+
+  .users-table,
+  .classes-table {
+    font-size: 11px;
+  }
+
+  .users-table th,
+  .users-table td,
+  .classes-table th,
+  .classes-table td {
+    padding: 6px;
+  }
+
+  .action-button {
+    padding: 4px 6px;
+    font-size: 10px;
+    margin: 0 2px;
+  }
+
+  .stat-card {
+    padding: 12px;
+  }
+
+  .stat-value {
+    font-size: 20px;
+  }
+
+  .stat-card h3 {
+    font-size: 12px;
+  }
+
+  .form-group {
+    margin-bottom: 12px;
+  }
+
+  .form-group input,
+  .form-group select {
+    padding: 8px;
+    font-size: 14px;
+  }
+
+  .action-button {
+    display: block;
+    width: 100%;
+    margin-bottom: 8px;
+  }
+
+  .class-actions {
+    flex-direction: column;
+  }
+
+  .class-actions button {
+    width: 100%;
+  }
+
+  .admin-settings .settings-header {
+    padding: 0;
+    margin-bottom: 0;
+  }
+}
+
+/* Hide scrollbars on tables but keep scrolling */
+.users-table,
+.classes-table {
+  overflow-x: auto;
+}
+
+/* Ensure proper button alignment */
+.settings-actions {
+  flex-wrap: wrap;
+}
+
+.settings-actions button {
+  flex: 1;
+  min-width: 120px;
+}
+
+@media (max-width: 480px) {
+  .settings-actions button {
+    flex: 1 1 100%;
+  }
+}

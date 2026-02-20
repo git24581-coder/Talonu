@@ -1,0 +1,84 @@
+└─ КОНФІГУРАЦІЯ СИСТЕМИ
+═════════════════════════════════════════════════════════════════
+
+✅ ЗАВЕРШЕНА КОНФІГУРАЦІЯ
+
+[СЕРЕДОВИЩЕ]
+  • NODE_ENV: development
+  • PORT: 3000
+  • DATABASE: SQLite (local) - c:\Mafis\backend\vouchers.db
+  • REDIS: Optional (autodetect)
+  
+[БЕЗПЕКА]
+  • JWT_SECRET: ✓ Налаштована
+  • BCRYPT_ROUNDS: 10
+  • MAX_LOGIN_ATTEMPTS: 5
+  • LOGIN_LOCK_TIMEOUT: 15 хвилин
+  • SESSION_TIMEOUT: 60 хвилин
+  
+[ТАЛОНИ]
+  • VOUCHER_EXPIRY_HOURS: 9
+  • AUTO_GENERATE: ✓ Увімкнено
+  • DAILY_LIMIT: 1000 талонів
+  • CACHE_TTL: 300 сек
+  
+[DATABASE]
+  • Тип: SQLite3 з WAL режимом
+  • Таблиці: users, vouchers, voucher_usage, classes, attendance, config, audit_log
+  • Автоматичні прагми:
+    - journal_mode=WAL (Write-ahead logging)
+    - synchronous=NORMAL
+    - cache_size=50000
+    - temp_store=MEMORY
+    - busy_timeout=5000
+  
+[СИСТЕМА]
+  • Назва: Шкільні талони - Система управління талонами
+  • Версія: 1.0.0
+  • Режим обслуговування: OFF
+  • Frontend: React static build (c:\Mafis\frontend\build)
+  
+[API ENDPOINTS]
+  ✓ GET  /api/health - Статус системи
+  ✓ POST /api/auth/login - Вхід
+  ✓ GET  /api/auth/refresh - Оновлення токена
+  ✓ GET  /api/classes - Список класів
+  ✓ GET  /api/vouchers - Мої талони
+  ✓ POST /api/vouchers/scan - Сканування QR
+  ✓ GET  /api/admin/config - Налаштування адміна
+  ✓ POST /api/admin/config/:key - Оновити налаштування
+  ✓ POST /api/admin/config/bulk-update - Масове оновлення
+  ✓ POST /api/admin/config/reset - Повернути стандартні
+  
+[АУТЕНТИФІКАЦІЯ]
+  • JWT Expiry: 24 години (налаштовується)
+  • Refresh Token: 7 днів (httpOnly cookie)
+  • Access Token: 15 хвилин (headers)
+  
+[МОНІТОРИНГ]
+  • Метрики: ✓ Включено (Prometheus compatible)
+  • Аудит: ✓ Логування всіх дій адміна
+  • Rate Limiting: ✓ 100 запитів/10хв на IPv4/user
+  
+[СУМІСНІСТЬ]
+  • Node.js: v20+
+  • Database: SQLite3 (entwickung) / PostgreSQL (production)
+  • Frontend: React 18.2
+  • API: REST + JSON
+  
+[ЗАПУСК]
+  • Development: npm start (PORT=3000)
+  • Production: npm start (PORT=5000, PostgreSQL)
+  • PowerShell: .\START.ps1 (автоматичний запуск усього)
+  
+═════════════════════════════════════════════════════════════════
+
+✅ ВСІХ НАЛАШТУВАНЬ ЗАВЕРШЕНО
+
+Для зміни налаштувань:
+  1. Відредагувати .env файл
+  2. Перезапустити сервер
+  
+Або через API:
+  POST /api/admin/config/:key
+  { "value": "new_value", "type": "string|number|boolean" }

@@ -1,0 +1,227 @@
+.admin-classes-container {
+  padding: 0;
+  width: 100%;
+}
+
+.classes-header {
+  background: transparent;
+  color: #111827;
+  padding: 0;
+  border-radius: 0;
+  margin-bottom: 30px;
+  text-align: left;
+}
+
+.classes-header h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.classes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.class-card {
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border-left: 4px solid #7C83FD;
+}
+
+.class-card h3 {
+  margin-top: 0;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.class-info {
+  color: #6B7280;
+  font-size: 14px;
+  margin: 10px 0;
+}
+
+.class-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.class-actions button {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  transition: all 0.3s;
+}
+
+.class-actions .edit-btn {
+  background: #2196f3;
+  color: white;
+}
+
+.class-actions .delete-btn {
+  background: #f44336;
+  color: white;
+}
+
+.classes-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.classes-table th {
+  background: #F5F7FA;
+  padding: 15px;
+  text-align: left;
+  font-weight: 600;
+  color: #111827;
+  border-bottom: 2px solid #D1D5DB;
+}
+
+.classes-table td {
+  padding: 15px;
+  border-bottom: 1px solid #D1D5DB;
+}
+
+.classes-table tr:hover {
+  background: #F5F7FA;
+}
+
+.add-class-form {
+  background: white;
+  padding: 30px;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  margin-bottom: 30px;
+  max-width: 600px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.form-row.full {
+  grid-template-columns: 1fr;
+}
+
+.class-create-form-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.class-create-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.class-create-select {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.class-detail-control-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.class-detail-select {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.class-detail-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.classes-table-wrapper,
+.students-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.classes-table,
+.students-table {
+  min-width: 620px;
+}
+
+.students-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.students-table th {
+  background: #F5F7FA;
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #111827;
+  border-bottom: 2px solid #D1D5DB;
+}
+
+.students-table td {
+  padding: 12px;
+  border-bottom: 1px solid #D1D5DB;
+}
+
+@media (max-width: 768px) {
+  .class-create-input,
+  .class-create-select,
+  .class-detail-select {
+    flex-basis: 100%;
+  }
+
+  .class-create-form-row button,
+  .class-detail-control-row button {
+    width: 100%;
+  }
+
+  .classes-table,
+  .students-table {
+    min-width: 520px;
+  }
+
+  .class-detail-actions {
+    flex-direction: column;
+  }
+
+  .class-detail-actions button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .classes-table,
+  .students-table {
+    min-width: 460px;
+  }
+
+  .class-card {
+    padding: 16px;
+  }
+}

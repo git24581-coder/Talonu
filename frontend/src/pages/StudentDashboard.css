@@ -1,0 +1,174 @@
+.student-container {
+  padding: 20px 5%;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.student-header {
+  background: transparent;
+  color: #2D3436;
+  padding: 20px 0;
+  border-radius: 0;
+  margin-bottom: 30px;
+  margin-top: 80px;
+  text-align: left;
+}
+
+.student-header h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: #2D3436;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.student-container .admin-tabs {
+  margin-bottom: 26px;
+}
+
+.student-container .tab-button {
+  padding: 14px 20px;
+  font-size: 15px;
+  min-height: 48px;
+  border-radius: 8px;
+  gap: 8px;
+}
+
+.student-container .tab-button.active {
+  padding: 14px 20px;
+}
+
+.student-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 15px;
+}
+
+.student-voucher-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 15px;
+}
+
+.student-voucher-grid .card {
+  max-width: 100%;
+  margin-bottom: 0;
+}
+
+.student-voucher-grid .card img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.student-container .table-scroll table {
+  min-width: 520px;
+}
+
+.vouchers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.voucher-card {
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border-left: 4px solid #7C83FD;
+}
+
+.voucher-card h3 {
+  margin-top: 0;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.voucher-code {
+  background: #f5f5f5;
+  padding: 10px;
+  border-radius: 5px;
+  font-family: monospace;
+  margin: 10px 0;
+  word-break: break-all;
+}
+
+.voucher-status {
+  display: inline-block;
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+.voucher-status.active {
+  background: #e8f5e9;
+  color: #388e3c;
+}
+
+.voucher-status.used {
+  background: #ffebee;
+  color: #d32f2f;
+}
+
+@media (max-width: 768px) {
+  .student-container {
+    padding: 15px;
+  }
+
+  .student-container .tab-button {
+    font-size: 13px;
+    padding: 12px 14px;
+    min-height: 46px;
+  }
+
+  .student-container .tab-button.active {
+    padding: 12px 14px;
+  }
+
+  .student-stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+
+  .student-voucher-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .student-container .card {
+    padding: 14px;
+  }
+
+  .student-container .table-scroll table {
+    min-width: 500px;
+  }
+}
+
+@media (max-width: 480px) {
+  .student-container {
+    padding: 10px;
+  }
+
+  .student-container .tab-button {
+    font-size: 12px;
+    padding: 10px 12px;
+    min-height: 44px;
+  }
+
+  .student-container .tab-button.active {
+    padding: 10px 12px;
+  }
+
+  .student-stats-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .student-container .table-scroll table {
+    min-width: 460px;
+  }
+}
