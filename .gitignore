@@ -39,6 +39,13 @@ config.json
 secrets.json
 backend/CONFIGURATION_COMPLETE.txt
 backend/server.js
+BUG_CONFIG.txt
+CHECKLIST.md
+DEPLOYMENT.md
+FOR_BOSS.md
+PROJECT_DETAILED_DESCRIPTION.txt
+QUICK_START.md
+READY_FOR_DELIVERY.txt
 
 # Test data with real information
 test-demo-users.js
