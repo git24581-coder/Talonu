@@ -30,4 +30,28 @@ Thumbs.db
 .idea/
 
 # Local backup folders
-backups/
+backups/backend/backups/
+
+# Sensitive configuration files
+admin-config.js
+backend/ecosystem.config.js
+config.json
+secrets.json
+backend/CONFIGURATION_COMPLETE.txt
+backend/server.js
+
+# Test data with real information
+test-demo-users.js
+*.backup
+*.bak
+
+# IDE and editor files
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# System files
+*.exe
+*.bin
